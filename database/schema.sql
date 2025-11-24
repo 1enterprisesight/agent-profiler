@@ -120,7 +120,7 @@ CREATE TABLE agent_activity_log (
     status VARCHAR(50),                  -- 'active', 'completed', 'failed'
     input_data JSONB,                    -- What the agent received
     output_data JSONB,                   -- What the agent produced
-    metadata JSONB,                      -- Additional context
+    meta_data JSONB,                      -- Additional context
     started_at TIMESTAMP DEFAULT NOW(),
     completed_at TIMESTAMP,
     duration_ms INTEGER
@@ -249,7 +249,7 @@ CREATE TABLE conversation_messages (
     session_id UUID REFERENCES conversation_sessions(id) ON DELETE CASCADE,
     role VARCHAR(50) NOT NULL,           -- 'user', 'assistant'
     content TEXT NOT NULL,
-    metadata JSONB,                      -- Additional message data
+    meta_data JSONB,                      -- Additional message data
     agent_activities UUID[],             -- References to agent_activity_log entries
     created_at TIMESTAMP DEFAULT NOW()
 );
@@ -269,7 +269,7 @@ CREATE TABLE uploaded_files (
     gcs_path VARCHAR(1000) NOT NULL,     -- Cloud Storage path
     file_size_bytes BIGINT,
     status VARCHAR(50),                  -- 'uploaded', 'processing', 'completed', 'error'
-    metadata JSONB,                      -- File metadata, schema, etc.
+    meta_data JSONB,                      -- File metadata, schema, etc.
     processing_results JSONB,            -- Results of processing
     records_imported INTEGER,
     error_details JSONB,

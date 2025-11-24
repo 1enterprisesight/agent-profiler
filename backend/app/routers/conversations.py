@@ -326,7 +326,7 @@ async def get_conversation_messages(
                     "id": str(msg.id),
                     "role": msg.role,
                     "content": msg.content,
-                    "metadata": msg.metadata,
+                    "metadata": msg.meta_data,
                     "created_at": msg.created_at.isoformat(),
                 }
                 for msg in messages

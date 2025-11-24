@@ -179,7 +179,7 @@ async def get_upload_history(
                     "status": ds.status,
                     "records_ingested": ds.records_ingested,
                     "created_at": ds.created_at.isoformat(),
-                    "metadata": ds.metadata,
+                    "metadata": ds.meta_data,
                 }
                 for ds in data_sources
             ]
