@@ -244,8 +244,8 @@ class AnalysisResult(Base):
 # USER SESSIONS & CONVERSATIONS
 # ============================================================================
 
-class ConversationSession(Base):
-    __tablename__ = "conversation_sessions"
+class Conversation(Base):
+    __tablename__ = "conversations"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(String(255), nullable=False, index=True)
@@ -283,8 +283,8 @@ class ConversationMessage(Base):
 # FILE UPLOADS & DATASETS
 # ============================================================================
 
-class UploadedFile(Base):
-    __tablename__ = "uploaded_files"
+class DataSource(Base):
+    __tablename__ = "data_sources"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(String(255), nullable=False, index=True)
