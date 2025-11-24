@@ -19,8 +19,8 @@ class Settings(BaseSettings):
     # Database
     database_url: str
 
-    # Redis
-    redis_host: str
+    # Redis (optional - not used in initial deployment)
+    redis_host: str = "localhost"
     redis_port: int = 6379
     redis_db: int = 0
     redis_password: str = ""
@@ -29,11 +29,11 @@ class Settings(BaseSettings):
     gemini_flash_model: str = "gemini-2.0-flash-exp"
     gemini_pro_model: str = "gemini-1.5-pro"
 
-    # Authentication
-    google_oauth_client_id: str
-    google_oauth_client_secret: str
+    # Authentication (optional - will be implemented later)
+    google_oauth_client_id: str = "placeholder-client-id"
+    google_oauth_client_secret: str = "placeholder-client-secret"
     allowed_domain: str = "enterprisesight.com"
-    jwt_secret_key: str
+    jwt_secret_key: str = "placeholder-secret-key-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expiration_hours: int = 24
 
