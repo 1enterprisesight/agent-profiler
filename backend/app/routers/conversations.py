@@ -19,6 +19,7 @@ from app.models import Conversation, ConversationMessage
 from app.agents.base import AgentMessage, AgentStatus
 from app.agents.orchestrator import OrchestratorAgent
 from app.agents.data_ingestion import DataIngestionAgent
+from app.agents.sql_analytics import SQLAnalyticsAgent
 
 
 logger = structlog.get_logger()
@@ -26,10 +27,12 @@ router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
 # Initialize agents
 data_ingestion = DataIngestionAgent()
+sql_analytics = SQLAnalyticsAgent()
 
 # Build agent registry
 agent_registry = {
     "data_ingestion": data_ingestion,
+    "sql_analytics": sql_analytics,
     # Will add more agents as we build them
 }
 
