@@ -261,24 +261,13 @@ async def global_exception_handler(request, exc):
 
 
 # ============================================================================
-# IMPORT ROUTERS (to be implemented)
+# IMPORT ROUTERS
 # ============================================================================
 
-# from app.routers import (
-#     conversations,
-#     crm_connections,
-#     data_upload,
-#     agents,
-#     analysis,
-#     benchmarks
-# )
+from app.routers import conversations, uploads
 
-# app.include_router(conversations.router, prefix="/api/v1", tags=["conversations"])
-# app.include_router(crm_connections.router, prefix="/api/v1", tags=["crm"])
-# app.include_router(data_upload.router, prefix="/api/v1", tags=["data"])
-# app.include_router(agents.router, prefix="/api/v1", tags=["agents"])
-# app.include_router(analysis.router, prefix="/api/v1", tags=["analysis"])
-# app.include_router(benchmarks.router, prefix="/api/v1", tags=["benchmarks"])
+app.include_router(conversations.router)
+app.include_router(uploads.router)
 
 
 if __name__ == "__main__":
