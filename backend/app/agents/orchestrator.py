@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
 import vertexai
-from vertexai.generative_models import GenerativeModel
+from vertexai.preview.generative_models import GenerativeModel
 
 from app.agents.base import BaseAgent, AgentMessage, AgentResponse, AgentStatus
 from app.config import settings
