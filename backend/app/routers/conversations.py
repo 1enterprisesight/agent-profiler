@@ -20,23 +20,37 @@ from app.agents.base import AgentMessage, AgentStatus
 from app.agents.orchestrator import OrchestratorAgent
 from app.agents.data_ingestion import DataIngestionAgent
 from app.agents.sql_analytics import SQLAnalyticsAgent
+from app.agents.semantic_search import SemanticSearchAgent
+from app.agents.pattern_recognition import PatternRecognitionAgent
+from app.agents.segmentation import SegmentationAgent
+from app.agents.benchmark import BenchmarkAgent
+from app.agents.recommendation import RecommendationAgent
 
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
-# Initialize agents
+# Initialize all agents
 data_ingestion = DataIngestionAgent()
 sql_analytics = SQLAnalyticsAgent()
+semantic_search = SemanticSearchAgent()
+pattern_recognition = PatternRecognitionAgent()
+segmentation = SegmentationAgent()
+benchmark = BenchmarkAgent()
+recommendation = RecommendationAgent()
 
 # Build agent registry
 agent_registry = {
     "data_ingestion": data_ingestion,
     "sql_analytics": sql_analytics,
-    # Will add more agents as we build them
+    "semantic_search": semantic_search,
+    "pattern_recognition": pattern_recognition,
+    "segmentation": segmentation,
+    "benchmark": benchmark,
+    "recommendation": recommendation,
 }
 
-# Initialize orchestrator with agent registry
+# Initialize orchestrator with complete agent registry
 orchestrator = OrchestratorAgent(agent_registry=agent_registry)
 
 
