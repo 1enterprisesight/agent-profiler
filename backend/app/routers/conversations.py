@@ -25,8 +25,16 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
 # Initialize agents
-orchestrator = OrchestratorAgent()
 data_ingestion = DataIngestionAgent()
+
+# Build agent registry
+agent_registry = {
+    "data_ingestion": data_ingestion,
+    # Will add more agents as we build them
+}
+
+# Initialize orchestrator with agent registry
+orchestrator = OrchestratorAgent(agent_registry=agent_registry)
 
 
 class ChatRequest(BaseModel):
@@ -109,10 +117,10 @@ async def chat(
             message=request.message[:100],
         )
 
-        # Route request through orchestrator
+        # Orchestrate multi-agent workflow
         orchestrator_message = AgentMessage(
             agent_type="orchestrator",
-            action="route",
+            action="orchestrate",
             payload={
                 "user_query": request.message,
                 "context": request.context or {},
@@ -120,86 +128,34 @@ async def chat(
             conversation_id=conversation_id,
         )
 
-        routing_response = await orchestrator.execute(
+        orchestration_response = await orchestrator.execute(
             orchestrator_message,
             db,
             user_id
         )
 
-        if not routing_response.is_success:
+        if not orchestration_response.is_success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Orchestrator failed: {routing_response.error}"
+                detail=f"Orchestration failed: {orchestration_response.error}"
             )
 
-        # Get routing decision
-        target_agent_name = routing_response.result.get("target_agent")
-        action = routing_response.result.get("action")
-        parameters = routing_response.result.get("parameters", {})
-        reasoning = routing_response.result.get("reasoning")
+        # Extract workflow results
+        result = orchestration_response.result
+        answer = result.get("answer", "Workflow completed.")
+        agents_used = result.get("agents_used", [])
+        execution_plan = result.get("execution_plan", {})
+        workflow_results = result.get("workflow_results", [])
 
         logger.info(
-            "request_routed",
-            target_agent=target_agent_name,
-            action=action,
-            reasoning=reasoning,
+            "workflow_completed",
+            agents_used=agents_used,
+            total_steps=len(workflow_results),
+            successful_steps=sum(1 for r in workflow_results if r.get("success"))
         )
-
-        # Execute target agent
-        target_agent = _get_agent_instance(target_agent_name)
-
-        if not target_agent:
-            # Agent not yet implemented
-            agent_response_text = f"I understand you want to {reasoning}. The {target_agent_name} agent will be available in an upcoming phase."
-
-            # Save assistant message
-            assistant_message = ConversationMessage(
-                conversation_id=conversation.id,
-                user_id=user_id,
-                role="assistant",
-                content=agent_response_text,
-                metadata={
-                    "target_agent": target_agent_name,
-                    "action": action,
-                    "status": "pending_implementation"
-                }
-            )
-            db.add(assistant_message)
-            await db.commit()
-
-            return ChatResponse(
-                conversation_id=conversation_id,
-                message_id=str(assistant_message.id),
-                response={
-                    "text": agent_response_text,
-                    "target_agent": target_agent_name,
-                    "action": action,
-                    "reasoning": reasoning,
-                },
-                agent_used=target_agent_name,
-                status="pending_implementation",
-                timestamp=datetime.utcnow().isoformat(),
-            )
-
-        # Execute the target agent
-        agent_message = AgentMessage(
-            agent_type=target_agent_name,
-            action=action,
-            payload=parameters,
-            conversation_id=conversation_id,
-        )
-
-        agent_response = await target_agent.execute(agent_message, db, user_id)
 
         # Format response text
-        if agent_response.is_success:
-            response_text = _format_agent_response(
-                target_agent_name,
-                action,
-                agent_response.result
-            )
-        else:
-            response_text = f"Sorry, I encountered an error: {agent_response.error}"
+        response_text = answer
 
         # Save assistant message
         assistant_message = ConversationMessage(
@@ -207,10 +163,11 @@ async def chat(
             user_id=user_id,
             role="assistant",
             content=response_text,
-            metadata={
-                "target_agent": target_agent_name,
-                "action": action,
-                "agent_response": agent_response.to_dict(),
+            meta_data={
+                "agents_used": agents_used,
+                "execution_plan": execution_plan,
+                "workflow_results": workflow_results,
+                "orchestration_metadata": orchestration_response.metadata,
             }
         )
         db.add(assistant_message)
@@ -224,11 +181,15 @@ async def chat(
             message_id=str(assistant_message.id),
             response={
                 "text": response_text,
-                "details": agent_response.result,
-                "reasoning": reasoning,
+                "agents_used": agents_used,
+                "execution_plan": execution_plan,
+                "workflow_summary": {
+                    "total_steps": len(workflow_results),
+                    "successful_steps": sum(1 for r in workflow_results if r.get("success"))
+                }
             },
-            agent_used=target_agent_name,
-            status=agent_response.status.value,
+            agent_used="orchestrator",
+            status=orchestration_response.status.value,
             timestamp=datetime.utcnow().isoformat(),
         )
 
@@ -346,26 +307,3 @@ async def get_conversation_messages(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get messages: {str(e)}"
         )
-
-
-def _get_agent_instance(agent_name: str):
-    """Get agent instance by name"""
-    agents = {
-        "data_ingestion": data_ingestion,
-        # Will add more agents in later phases
-    }
-    return agents.get(agent_name)
-
-
-def _format_agent_response(agent_name: str, action: str, result: dict) -> str:
-    """Format agent response into human-readable text"""
-
-    if agent_name == "data_ingestion" and action == "upload_csv":
-        ingested = result.get("records_ingested", 0)
-        failed = result.get("records_failed", 0)
-        total = result.get("total_rows", 0)
-
-        return f"Successfully processed CSV file! Ingested {ingested} out of {total} records. {failed} records failed validation."
-
-    # Default formatting
-    return f"Action '{action}' completed successfully. {result.get('message', '')}"
