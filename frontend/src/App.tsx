@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { AgentNetwork } from './components/AgentNetwork';
 import { ChatInterface } from './components/ChatInterface';
 import { WorkflowDisplay } from './components/WorkflowDisplay';
+import { DataUpload } from './components/DataUpload';
 
 function App() {
   const [activeAgents, setActiveAgents] = useState<string[]>([]);
@@ -19,9 +20,12 @@ function App() {
               </h1>
               <p className="text-sm text-slate-400">Multi-Agent AI System for Client Analysis</p>
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-              <span className="text-sm text-slate-400">System Online</span>
+            <div className="flex items-center gap-4">
+              <DataUpload />
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                <span className="text-sm text-slate-400">System Online</span>
+              </div>
             </div>
           </div>
         </div>

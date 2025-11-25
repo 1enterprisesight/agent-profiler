@@ -38,4 +38,23 @@ export const healthApi = {
   },
 };
 
+export const dataApi = {
+  uploadCSV: async (file: File) => {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await axios.post(`${API_BASE_URL}/data/upload-csv`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  getDataSources: async () => {
+    const response = await api.get('/data/sources');
+    return response.data;
+  },
+};
+
 export default api;
