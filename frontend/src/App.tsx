@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { AgentNetwork } from './components/AgentNetwork';
 import { ChatInterface } from './components/ChatInterface';
 import { WorkflowDisplay } from './components/WorkflowDisplay';
-import { DataUpload } from './components/DataUpload';
+import { DataSourceList } from './components/DataSourceList';
+import { DataSourceManager } from './components/DataSourceManager';
 
 function App() {
   const [activeAgents, setActiveAgents] = useState<string[]>([]);
   const [currentWorkflow, setCurrentWorkflow] = useState<any>(null);
+  const [showDataManager, setShowDataManager] = useState(false);
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
@@ -20,12 +22,9 @@ function App() {
               </h1>
               <p className="text-sm text-slate-400">Multi-Agent AI System for Client Analysis</p>
             </div>
-            <div className="flex items-center gap-4">
-              <DataUpload />
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                <span className="text-sm text-slate-400">System Online</span>
-              </div>
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+              <span className="text-sm text-slate-400">System Online</span>
             </div>
           </div>
         </div>
@@ -34,8 +33,9 @@ function App() {
       {/* Main Content */}
       <main className="container mx-auto px-4 py-6">
         <div className="grid grid-cols-12 gap-6 h-[calc(100vh-120px)]">
-          {/* Left Panel - Agent Network */}
-          <div className="col-span-4 h-full">
+          {/* Left Panel - Data Sources & Agent Network */}
+          <div className="col-span-4 h-full flex flex-col gap-6 overflow-y-auto">
+            <DataSourceList onManageClick={() => setShowDataManager(true)} />
             <AgentNetwork activeAgents={activeAgents} />
           </div>
 
@@ -53,6 +53,12 @@ function App() {
           </div>
         </div>
       </main>
+
+      {/* Data Source Manager Modal */}
+      <DataSourceManager
+        isOpen={showDataManager}
+        onClose={() => setShowDataManager(false)}
+      />
     </div>
   );
 }

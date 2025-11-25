@@ -35,9 +35,10 @@ export function DataUpload({ onUploadComplete }: DataUploadProps) {
 
     try {
       const response = await dataApi.uploadCSV(file);
+      const recordCount = response.result?.records_ingested || response.result?.row_count || 0;
       setUploadStatus({
         type: 'success',
-        message: `Successfully uploaded ${response.records_processed} records`
+        message: `Successfully uploaded ${recordCount} records`
       });
       setFile(null);
 

@@ -367,3 +367,48 @@ COMMENT ON TABLE conversation_sessions IS 'User conversation sessions with agent
 COMMENT ON TABLE conversation_messages IS 'Individual messages in conversations';
 COMMENT ON TABLE uploaded_files IS 'CSV and other file uploads tracking';
 COMMENT ON TABLE audit_log IS 'Complete audit trail for compliance';
+
+-- ============================================================================
+-- V1.3.0 ADDITIONS - User tracking and sessions
+-- Added: 2025-11-25
+-- ============================================================================
+
+-- Add user_id to agent_activity_log for tracking
+ALTER TABLE agent_activity_log ADD COLUMN IF NOT EXISTS user_id VARCHAR(255);
+CREATE INDEX IF NOT EXISTS idx_agent_activity_user ON agent_activity_log(user_id);
+
+-- Add user_id to agent_llm_conversations for tracking
+ALTER TABLE agent_llm_conversations ADD COLUMN IF NOT EXISTS user_id VARCHAR(255);
+CREATE INDEX IF NOT EXISTS idx_agent_llm_user ON agent_llm_conversations(user_id);
+
+-- Add user_id and data_source_id to clients for tracking
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS user_id VARCHAR(255);
+ALTER TABLE clients ADD COLUMN IF NOT EXISTS data_source_id UUID;
+CREATE INDEX IF NOT EXISTS idx_clients_user ON clients(user_id);
+CREATE INDEX IF NOT EXISTS idx_clients_data_source ON clients(data_source_id);
+
+-- User sessions table for Google Workspace OAuth tracking
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id VARCHAR(255) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    name VARCHAR(255),
+    picture_url TEXT,
+    access_token_hash VARCHAR(255),
+    refresh_token_encrypted TEXT,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    last_activity_at TIMESTAMP DEFAULT NOW(),
+    is_active BOOLEAN DEFAULT TRUE,
+    metadata JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_email ON user_sessions(email);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_active ON user_sessions(is_active, expires_at);
+
+COMMENT ON TABLE user_sessions IS 'User session tracking for Google Workspace OAuth';
+COMMENT ON COLUMN clients.user_id IS 'Google Workspace user email who owns this client record';
+COMMENT ON COLUMN clients.data_source_id IS 'Reference to uploaded_files for cascade delete';
+COMMENT ON COLUMN agent_activity_log.user_id IS 'Google Workspace user email tracking agent activity';
+COMMENT ON COLUMN agent_llm_conversations.user_id IS 'Google Workspace user email for LLM usage tracking';

@@ -43,7 +43,7 @@ export const dataApi = {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await axios.post(`${API_BASE_URL}/data/upload-csv`, formData, {
+    const response = await axios.post(`${API_BASE_URL}/uploads/csv`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -52,7 +52,12 @@ export const dataApi = {
   },
 
   getDataSources: async () => {
-    const response = await api.get('/data/sources');
+    const response = await api.get('/uploads/history');
+    return response.data;
+  },
+
+  deleteDataSource: async (dataSourceId: string) => {
+    const response = await api.delete(`/uploads/${dataSourceId}`);
     return response.data;
   },
 };

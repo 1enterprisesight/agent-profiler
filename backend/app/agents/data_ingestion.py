@@ -156,12 +156,12 @@ class DataIngestionAgent(BaseAgent):
             # Create data source record
             data_source = DataSource(
                 user_id=user_id,
-                source_type="csv",
-                source_name=dataset_name,
+                file_type="csv",  # Changed from source_type
                 file_name=file_name,
-                file_path=file_path,
+                gcs_path=payload.get("gcs_path", ""),  # Changed from file_path
                 status="processing",
-                metadata={
+                meta_data={  # Changed from metadata
+                    "dataset_name": dataset_name,
                     "rows": len(df),
                     "columns": list(df.columns),
                     "dtypes": {col: str(dtype) for col, dtype in df.dtypes.items()},
@@ -194,16 +194,15 @@ class DataIngestionAgent(BaseAgent):
 
                     # Create client record
                     client = Client(
+                        user_id=user_id,
                         source_type="csv",
                         source_id=f"csv_{data_source.id}_{idx}",
                         data_source_id=data_source.id,
-                        user_id=user_id,
                         client_name=client_data.get("client_name"),
                         contact_email=client_data.get("contact_email"),
                         company_name=client_data.get("company_name"),
                         core_data=client_data.get("core_data", {}),
                         custom_data=client_data.get("custom_data", {}),
-                        tags=client_data.get("tags", []),
                     )
                     db.add(client)
                     ingested_count += 1
@@ -218,7 +217,8 @@ class DataIngestionAgent(BaseAgent):
 
             # Update data source status
             data_source.status = "completed"
-            data_source.records_ingested = ingested_count
+            data_source.records_imported = ingested_count  # Changed from records_ingested
+            data_source.processed_at = datetime.utcnow()
             await db.commit()
 
             self.logger.info(

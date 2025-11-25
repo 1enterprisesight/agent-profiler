@@ -80,9 +80,11 @@ class Client(Base):
     __tablename__ = "clients"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(255), index=True)  # Added for user tracking
     source_type = Column(String(50), nullable=False, index=True)
     source_id = Column(String(255))
     connection_id = Column(UUID(as_uuid=True), ForeignKey("crm_connections.id", ondelete="SET NULL"))
+    data_source_id = Column(UUID(as_uuid=True), ForeignKey("uploaded_files.id", ondelete="CASCADE"), index=True)
 
     # Minimal structured fields
     client_name = Column(String(500))
@@ -143,6 +145,7 @@ class AgentActivityLog(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    user_id = Column(String(255), index=True)  # Added for user tracking
     agent_name = Column(String(100), nullable=False, index=True)
     activity_type = Column(String(100))
     status = Column(String(50))
@@ -159,6 +162,7 @@ class AgentLLMConversation(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    user_id = Column(String(255), index=True)  # Added for user tracking
     agent_name = Column(String(100), nullable=False, index=True)
     model_used = Column(String(100))
     prompt = Column(Text, nullable=False)
@@ -245,7 +249,7 @@ class AnalysisResult(Base):
 # ============================================================================
 
 class Conversation(Base):
-    __tablename__ = "conversations"
+    __tablename__ = "conversation_sessions"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(String(255), nullable=False, index=True)
@@ -263,7 +267,7 @@ class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id = Column(UUID(as_uuid=True), ForeignKey("conversation_sessions.id", ondelete="CASCADE"), index=True)
+    session_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), index=True)
     role = Column(String(50), nullable=False)
     content = Column(Text, nullable=False)
     meta_data = Column(JSONB)
@@ -271,7 +275,7 @@ class ConversationMessage(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     # Relationships
-    session = relationship("ConversationSession", back_populates="messages")
+    session = relationship("Conversation", back_populates="messages")
 
     # Indexes
     __table_args__ = (
@@ -284,7 +288,7 @@ class ConversationMessage(Base):
 # ============================================================================
 
 class DataSource(Base):
-    __tablename__ = "data_sources"
+    __tablename__ = "uploaded_files"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(String(255), nullable=False, index=True)
@@ -317,3 +321,24 @@ class AuditLog(Base):
     ip_address = Column(String(100))
     user_agent = Column(Text)
     created_at = Column(TIMESTAMP, server_default=func.now(), index=True)
+
+
+# ============================================================================
+# USER SESSIONS
+# ============================================================================
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(255), nullable=False, index=True)
+    email = Column(String(255), nullable=False, index=True)
+    name = Column(String(255))
+    picture_url = Column(Text)
+    access_token_hash = Column(String(255))
+    refresh_token_encrypted = Column(Text)
+    expires_at = Column(TIMESTAMP, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    last_activity_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    is_active = Column(Boolean, default=True, index=True)
+    metadata = Column(JSONB)

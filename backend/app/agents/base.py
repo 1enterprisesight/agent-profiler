@@ -140,10 +140,10 @@ class BaseAgent(ABC):
 
             # Create activity log entry
             activity_log = AgentActivityLog(
-                conversation_id=message.conversation_id,
+                session_id=message.conversation_id,  # Use conversation_id as session_id
                 user_id=user_id,
                 agent_name=self.name,
-                action=message.action,
+                activity_type=message.action,  # Changed from 'action' to 'activity_type'
                 input_data=message.payload,
                 status=AgentStatus.RUNNING.value,
             )
@@ -166,8 +166,9 @@ class BaseAgent(ABC):
             end_time = datetime.utcnow()
             activity_log.status = response.status.value
             activity_log.output_data = response.result
-            activity_log.error_message = response.error
-            activity_log.execution_time_ms = int((end_time - start_time).total_seconds() * 1000)
+            activity_log.meta_data = {"error": response.error} if response.error else None
+            activity_log.completed_at = end_time
+            activity_log.duration_ms = int((end_time - start_time).total_seconds() * 1000)
 
             await db.commit()
 
@@ -175,7 +176,7 @@ class BaseAgent(ABC):
             self.logger.info(
                 "agent_completed",
                 status=response.status.value,
-                execution_time_ms=activity_log.execution_time_ms,
+                duration_ms=activity_log.duration_ms,
                 conversation_id=message.conversation_id,
             )
 
@@ -194,8 +195,9 @@ class BaseAgent(ABC):
             if activity_log:
                 end_time = datetime.utcnow()
                 activity_log.status = AgentStatus.FAILED.value
-                activity_log.error_message = str(e)
-                activity_log.execution_time_ms = int((end_time - start_time).total_seconds() * 1000)
+                activity_log.meta_data = {"error": str(e)}
+                activity_log.completed_at = end_time
+                activity_log.duration_ms = int((end_time - start_time).total_seconds() * 1000)
                 await db.commit()
 
             return AgentResponse(
@@ -232,31 +234,31 @@ class BaseAgent(ABC):
         prompt: str,
         response: str,
         tokens_used: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        latency_ms: Optional[int] = None,
     ):
         """
         Log LLM conversation for transparency
 
         Args:
             db: Database session
-            conversation_id: Conversation ID
+            conversation_id: Conversation ID (used as session_id)
             user_id: User ID
             model_name: LLM model name
             prompt: Input prompt
             response: LLM response
             tokens_used: Optional token count
-            metadata: Optional metadata
+            latency_ms: Optional latency in milliseconds
         """
         try:
             llm_log = AgentLLMConversation(
-                conversation_id=conversation_id,
+                session_id=conversation_id,  # Use conversation_id as session_id
                 user_id=user_id,
                 agent_name=self.name,
-                model_name=model_name,
-                prompt_text=prompt,
-                response_text=response,
-                tokens_used=tokens_used,
-                metadata=metadata or {},
+                model_used=model_name,  # Changed from model_name
+                prompt=prompt,  # Changed from prompt_text
+                response=response,  # Changed from response_text
+                token_usage={"total": tokens_used} if tokens_used else None,  # JSONB format
+                latency_ms=latency_ms,
             )
             db.add(llm_log)
             await db.flush()

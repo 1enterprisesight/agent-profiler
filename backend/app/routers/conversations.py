@@ -13,7 +13,7 @@ import uuid
 
 import structlog
 
-from app.database import get_db
+from app.database import get_db_session
 from app.auth import get_current_user
 from app.models import Conversation, ConversationMessage
 from app.agents.base import AgentMessage, AgentStatus
@@ -84,7 +84,7 @@ class ConversationSummary(BaseModel):
 async def chat(
     request: ChatRequest,
     user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Send a message and get agent response
@@ -119,8 +119,7 @@ async def chat(
 
         # Save user message
         user_message = ConversationMessage(
-            conversation_id=conversation.id,
-            user_id=user_id,
+            session_id=conversation.id,  # Changed from conversation_id
             role="user",
             content=request.message,
         )
@@ -176,8 +175,7 @@ async def chat(
 
         # Save assistant message
         assistant_message = ConversationMessage(
-            conversation_id=conversation.id,
-            user_id=user_id,
+            session_id=conversation.id,  # Changed from conversation_id
             role="assistant",
             content=response_text,
             meta_data={
@@ -228,7 +226,7 @@ async def chat(
 @router.get("/", response_model=List[ConversationSummary])
 async def list_conversations(
     user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     List all conversations for the current user
@@ -269,7 +267,7 @@ async def list_conversations(
 async def get_conversation_messages(
     conversation_id: str,
     user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Get all messages in a conversation
@@ -291,7 +289,7 @@ async def get_conversation_messages(
 
         result = await db.execute(
             select(ConversationMessage)
-            .where(ConversationMessage.conversation_id == conversation.id)
+            .where(ConversationMessage.session_id == conversation.id)
             .order_by(ConversationMessage.created_at.asc())
         )
         messages = result.scalars().all()

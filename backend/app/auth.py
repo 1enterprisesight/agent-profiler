@@ -3,7 +3,7 @@ Authentication and authorization
 Google Workspace OAuth 2.0 for @enterprisesight.com users
 """
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import OAuth2AuthorizationCodeBearer
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
@@ -175,6 +175,63 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     )
 
     return user
+
+
+async def get_current_user_dev_mode(
+    authorization: Optional[str] = Header(None, alias="Authorization")
+) -> str:
+    """
+    Development mode authentication with fallback
+
+    In development: Returns test user if no auth header provided
+    In production: Always requires valid authentication
+    """
+    from app.config import settings
+
+    # SECURITY: Always require auth in production
+    if settings.app_env == "production":
+        if not authorization:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        # Extract and validate token in production
+        try:
+            scheme, token = authorization.split()
+            if scheme.lower() != "bearer":
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid authentication scheme",
+                )
+            # Decode and verify token
+            payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[JWT_ALGORITHM])
+            return payload.get("sub", "")  # Return user_id from token
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token expired",
+            )
+        except (jwt.InvalidTokenError, ValueError) as e:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+            )
+
+    # DEVELOPMENT MODE: Allow bypass for testing
+    # Only active when APP_ENV=development
+    if authorization:
+        # If auth header provided, validate it even in dev mode
+        try:
+            scheme, token = authorization.split()
+            if scheme.lower() == "bearer":
+                payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[JWT_ALGORITHM])
+                return payload.get("sub", "dev-user")
+        except Exception:
+            pass  # Fall through to dev user
+
+    logger.warning("DEV_MODE: Using test user - This should NEVER appear in production logs")
+    return "dev-user@enterprisesight.com"
 
 
 async def get_current_active_user(

@@ -13,8 +13,8 @@ from pathlib import Path
 import structlog
 from google.cloud import storage
 
-from app.database import get_db
-from app.auth import get_current_user
+from app.database import get_db_session
+from app.auth import get_current_user, get_current_user_dev_mode
 from app.config import settings
 from app.agents.base import AgentMessage
 from app.agents.data_ingestion import DataIngestionAgent
@@ -35,8 +35,8 @@ async def upload_csv(
     file: UploadFile = File(...),
     dataset_name: Optional[str] = Form(None),
     conversation_id: Optional[str] = Form(None),
-    user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_dev_mode),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Upload CSV file for data ingestion
@@ -151,8 +151,8 @@ async def upload_csv(
 
 @router.get("/history")
 async def get_upload_history(
-    user_id: str = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_dev_mode),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Get upload history for the current user
@@ -164,7 +164,7 @@ async def get_upload_history(
         result = await db.execute(
             select(DataSource)
             .where(DataSource.user_id == user_id)
-            .order_by(DataSource.created_at.desc())
+            .order_by(DataSource.uploaded_at.desc())
             .limit(50)
         )
         data_sources = result.scalars().all()
@@ -173,12 +173,12 @@ async def get_upload_history(
             "uploads": [
                 {
                     "id": str(ds.id),
-                    "source_type": ds.source_type,
-                    "source_name": ds.source_name,
+                    "source_type": ds.file_type or "csv",
+                    "source_name": ds.file_name,
                     "file_name": ds.file_name,
                     "status": ds.status,
-                    "records_ingested": ds.records_ingested,
-                    "created_at": ds.created_at.isoformat(),
+                    "records_ingested": ds.records_imported or 0,
+                    "created_at": ds.uploaded_at.isoformat() if ds.uploaded_at else None,
                     "metadata": ds.meta_data,
                 }
                 for ds in data_sources
@@ -195,4 +195,104 @@ async def get_upload_history(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get upload history: {str(e)}"
+        )
+
+
+@router.delete("/{data_source_id}")
+async def delete_data_source(
+    data_source_id: str,
+    user_id: str = Depends(get_current_user_dev_mode),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Delete a data source and all associated client records
+
+    This will:
+    1. Verify the data source belongs to the user
+    2. Delete all client records from this source
+    3. Delete the data source record
+    4. Remove the file from Cloud Storage
+    """
+    try:
+        from app.models import DataSource, Client
+        from sqlalchemy import select, delete
+        import uuid
+
+        # Parse UUID
+        try:
+            ds_uuid = uuid.UUID(data_source_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid data source ID format"
+            )
+
+        # Get data source
+        result = await db.execute(
+            select(DataSource)
+            .where(DataSource.id == ds_uuid)
+            .where(DataSource.user_id == user_id)
+        )
+        data_source = result.scalar_one_or_none()
+
+        if not data_source:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Data source not found or access denied"
+            )
+
+        logger.info(
+            "deleting_data_source",
+            data_source_id=data_source_id,
+            user_id=user_id,
+            file_name=data_source.file_name,
+        )
+
+        # Delete all client records from this source
+        delete_result = await db.execute(
+            delete(Client).where(Client.data_source_id == ds_uuid)
+        )
+        deleted_clients = delete_result.rowcount
+
+        # Delete the data source
+        await db.delete(data_source)
+        await db.commit()
+
+        # Try to delete from Cloud Storage (non-blocking)
+        if data_source.gcs_path:
+            try:
+                bucket_name = settings.gcs_bucket_name
+                blob_path = data_source.gcs_path.replace(f"gs://{bucket_name}/", "")
+                bucket = storage_client.bucket(bucket_name)
+                blob = bucket.blob(blob_path)
+                blob.delete()
+                logger.info("gcs_file_deleted", gcs_path=data_source.gcs_path)
+            except Exception as e:
+                logger.warning("gcs_delete_failed", error=str(e), gcs_path=data_source.gcs_path)
+
+        logger.info(
+            "data_source_deleted",
+            data_source_id=data_source_id,
+            deleted_clients=deleted_clients,
+        )
+
+        return {
+            "status": "success",
+            "message": f"Data source deleted successfully",
+            "deleted_clients": deleted_clients,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "delete_data_source_failed",
+            error=str(e),
+            data_source_id=data_source_id,
+            user_id=user_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete data source: {str(e)}"
         )

@@ -1,45 +1,22 @@
 # Agent Profiler Backend - Docker Image for Cloud Run
-# Multi-stage build for optimal image size
-
-# ============================================================================
-# Stage 1: Builder
-# ============================================================================
-FROM python:3.11-slim as builder
-
-# Set working directory
-WORKDIR /build
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    g++ \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements
-COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-# ============================================================================
-# Stage 2: Runtime
-# ============================================================================
 FROM python:3.11-slim
 
 # Set working directory
 WORKDIR /app
 
-# Install runtime dependencies only
+# Install system dependencies (both build and runtime)
 RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libpq-dev \
     libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Python dependencies from builder
-COPY --from=builder /root/.local /root/.local
+# Copy requirements
+COPY requirements.txt .
 
-# Make sure scripts in .local are usable
-ENV PATH=/root/.local/bin:$PATH
+# Install Python dependencies directly (no multi-stage, no --user)
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app/ /app/app/
