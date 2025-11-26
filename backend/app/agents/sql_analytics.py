@@ -23,6 +23,7 @@ DATABASE_SCHEMA = {
         "description": "Client records from all data sources",
         "columns": {
             "id": "UUID - Primary key",
+            "user_id": "VARCHAR - Owner user ID (REQUIRED for filtering)",
             "source_type": "VARCHAR - Data source type (csv, salesforce, wealthbox, etc.)",
             "source_id": "VARCHAR - Original ID in source system",
             "connection_id": "UUID - Reference to CRM connection",
@@ -41,20 +42,23 @@ DATABASE_SCHEMA = {
             "custom_data": ["varies by source"],
             "computed_metrics": ["engagement_score", "churn_risk", "lifetime_value"]
         },
-        "indexes": ["source_type", "source_id", "contact_email", "core_data", "custom_data"]
+        "indexes": ["user_id", "source_type", "source_id", "contact_email", "core_data", "custom_data"]
     },
-    "data_sources": {
+    "uploaded_files": {
         "description": "Uploaded files and data sources",
         "columns": {
             "id": "UUID - Primary key",
-            "user_id": "VARCHAR - Owner user ID",
-            "source_type": "VARCHAR - Source type",
-            "source_name": "VARCHAR - Display name",
+            "user_id": "VARCHAR - Owner user ID (REQUIRED for filtering)",
             "file_name": "VARCHAR - Original filename",
+            "file_type": "VARCHAR - File MIME type",
+            "gcs_path": "VARCHAR - Cloud Storage path",
+            "file_size_bytes": "BIGINT - File size",
             "status": "VARCHAR - Processing status",
-            "records_ingested": "INTEGER - Number of records imported",
-            "meta_data": "JSONB - File metadata and schema info",
-            "created_at": "TIMESTAMP - Upload time"
+            "metadata": "JSONB - File metadata and schema info",
+            "processing_results": "JSONB - Import results",
+            "records_imported": "INTEGER - Number of records imported",
+            "uploaded_at": "TIMESTAMP - Upload time",
+            "processed_at": "TIMESTAMP - Processing completion time"
         }
     }
 }
@@ -272,29 +276,34 @@ DATABASE SCHEMA:
 {schema_desc}
 
 CRITICAL RULES:
-1. ONLY use quantitative operations:
+1. SECURITY - MANDATORY: Every query MUST include "WHERE user_id = :user_id" to filter data by the current user.
+   - This is NON-NEGOTIABLE for data isolation
+   - Use ":user_id" as a parameter placeholder (will be substituted)
+
+2. ONLY use quantitative operations:
    - Math: SUM, AVG, COUNT, MIN, MAX, calculations
    - Dates: DATE comparisons, INTERVAL calculations, AGE functions
    - Exact filtering: WHERE column = value, WHERE column > value, WHERE column IN (...)
 
-2. NEVER use these (they belong to Semantic Search Agent):
+3. NEVER use these (they belong to Semantic Search Agent):
    - LIKE or ILIKE patterns
    - Regex (~ or ~*)
    - Full-text search
    - Fuzzy matching
 
-3. JSONB field access:
+4. JSONB field access:
    - Use ->> for text: core_data->>'aum'
    - Use -> for JSON: core_data->'address'
    - Cast when needed: (core_data->>'aum')::numeric
 
-4. Always include:
+5. Always include:
+   - WHERE user_id = :user_id (MANDATORY)
    - Proper JOIN conditions
    - Appropriate WHERE clauses
    - LIMIT to prevent huge result sets (default 100)
    - ORDER BY for consistent results
 
-5. Return only the SELECT statement, no markdown or explanation
+6. Return only the SELECT statement, no markdown or explanation
 
 Query Intent: "{query_intent}"
 
@@ -303,7 +312,7 @@ Filters to apply: {json.dumps(filters) if filters else "None"}{client_ids_clause
 EXAMPLES:
 
 Intent: "Count all clients"
-SELECT COUNT(*) as total_clients FROM clients;
+SELECT COUNT(*) as total_clients FROM clients WHERE user_id = :user_id;
 
 Intent: "Calculate average AUM per client"
 SELECT
@@ -311,7 +320,8 @@ SELECT
     COUNT(*) as total_clients,
     SUM((core_data->>'aum')::numeric) as total_aum
 FROM clients
-WHERE core_data->>'aum' IS NOT NULL;
+WHERE user_id = :user_id
+  AND core_data->>'aum' IS NOT NULL;
 
 Intent: "Find clients with AUM over $1M"
 SELECT
@@ -319,7 +329,8 @@ SELECT
     (core_data->>'aum')::numeric as aum,
     core_data->>'last_contact_date' as last_contact
 FROM clients
-WHERE (core_data->>'aum')::numeric > 1000000
+WHERE user_id = :user_id
+  AND (core_data->>'aum')::numeric > 1000000
 ORDER BY (core_data->>'aum')::numeric DESC
 LIMIT 100;
 
@@ -329,7 +340,8 @@ SELECT
     core_data->>'last_contact_date' as last_contact,
     AGE(NOW(), (core_data->>'last_contact_date')::timestamp) as days_since_contact
 FROM clients
-WHERE (core_data->>'last_contact_date')::timestamp < NOW() - INTERVAL '60 days'
+WHERE user_id = :user_id
+  AND (core_data->>'last_contact_date')::timestamp < NOW() - INTERVAL '60 days'
 ORDER BY (core_data->>'last_contact_date')::timestamp ASC
 LIMIT 100;
 
@@ -340,7 +352,8 @@ SELECT
     AVG((core_data->>'aum')::numeric) as avg_aum,
     SUM((core_data->>'aum')::numeric) as total_aum
 FROM clients
-WHERE core_data->>'risk_score' IS NOT NULL
+WHERE user_id = :user_id
+  AND core_data->>'risk_score' IS NOT NULL
   AND core_data->>'aum' IS NOT NULL
 GROUP BY core_data->>'risk_score'
 ORDER BY (core_data->>'risk_score')::numeric DESC;
@@ -451,6 +464,13 @@ Now generate the SQL query for the intent above:"""
                 "reason": "Regex patterns not allowed - use Semantic Search Agent"
             }
 
+        # CRITICAL: Verify user_id filter is present
+        if ":user_id" not in query.lower() and "user_id" not in query.lower():
+            return {
+                "safe": False,
+                "reason": "Query must include user_id filter for data isolation"
+            }
+
         return {"safe": True, "reason": "Query passed validation"}
 
     async def _execute_query(
@@ -468,8 +488,8 @@ Now generate the SQL query for the intent above:"""
         start_time = datetime.utcnow()
 
         try:
-            # Execute query
-            result = await db.execute(text(query))
+            # Execute query with user_id parameter for data isolation
+            result = await db.execute(text(query), {"user_id": user_id})
 
             # Fetch all results
             rows = result.fetchall()

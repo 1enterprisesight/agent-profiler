@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     redis_password: str = ""
 
     # Gemini Models
-    gemini_flash_model: str = "gemini-2.0-flash-exp"
-    gemini_pro_model: str = "gemini-1.5-pro"
+    gemini_flash_model: str = "gemini-2.0-flash"
+    gemini_pro_model: str = "gemini-2.5-pro"
 
     # Authentication - Google Workspace OAuth
     google_oauth_client_id: str = "1041758516609-p7k2rjrc8efpob1dvqir2d4v62l0hl2b.apps.googleusercontent.com"

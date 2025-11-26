@@ -124,11 +124,12 @@ class RecommendationAgent(BaseAgent):
                 core_data,
                 computed_metrics
             FROM clients
+            WHERE user_id = :user_id
             ORDER BY RANDOM()
             LIMIT 100
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows:
@@ -199,10 +200,11 @@ class RecommendationAgent(BaseAgent):
                 core_data,
                 computed_metrics
             FROM clients
+            WHERE user_id = :user_id
             LIMIT 200
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             columns = result.keys()
@@ -263,9 +265,10 @@ class RecommendationAgent(BaseAgent):
                 COUNT(CASE WHEN core_data->>'aum' IS NOT NULL THEN 1 END) as has_aum,
                 COUNT(CASE WHEN core_data->>'last_contact_date' IS NOT NULL THEN 1 END) as has_contact_date
             FROM clients
+            WHERE user_id = :user_id
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             row = result.fetchone()
 
             if row:

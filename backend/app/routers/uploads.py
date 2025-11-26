@@ -14,7 +14,7 @@ import structlog
 from google.cloud import storage
 
 from app.database import get_db_session
-from app.auth import get_current_user, get_current_user_dev_mode
+from app.auth import get_current_user, User
 from app.config import settings
 from app.agents.base import AgentMessage
 from app.agents.data_ingestion import DataIngestionAgent
@@ -35,7 +35,7 @@ async def upload_csv(
     file: UploadFile = File(...),
     dataset_name: Optional[str] = Form(None),
     conversation_id: Optional[str] = Form(None),
-    user_id: str = Depends(get_current_user_dev_mode),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -48,6 +48,7 @@ async def upload_csv(
     4. Schema analyzed using Gemini
     5. Data imported into PostgreSQL
     """
+    user_id = current_user.user_id
     try:
         # Validate file type
         if not file.filename.endswith('.csv'):
@@ -151,12 +152,13 @@ async def upload_csv(
 
 @router.get("/history")
 async def get_upload_history(
-    user_id: str = Depends(get_current_user_dev_mode),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
     Get upload history for the current user
     """
+    user_id = current_user.user_id
     try:
         from app.models import DataSource
         from sqlalchemy import select
@@ -201,7 +203,7 @@ async def get_upload_history(
 @router.delete("/{data_source_id}")
 async def delete_data_source(
     data_source_id: str,
-    user_id: str = Depends(get_current_user_dev_mode),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -213,6 +215,7 @@ async def delete_data_source(
     3. Delete the data source record
     4. Remove the file from Cloud Storage
     """
+    user_id = current_user.user_id
     try:
         from app.models import DataSource, Client
         from sqlalchemy import select, delete

@@ -151,7 +151,7 @@ class AgentActivityLog(Base):
     status = Column(String(50))
     input_data = Column(JSONB)
     output_data = Column(JSONB)
-    meta_data = Column(JSONB)
+    meta_data = Column("metadata", JSONB)
     started_at = Column(TIMESTAMP, server_default=func.now(), index=True)
     completed_at = Column(TIMESTAMP)
     duration_ms = Column(Integer)
@@ -267,7 +267,7 @@ class ConversationMessage(Base):
     __tablename__ = "conversation_messages"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), index=True)
+    session_id = Column(UUID(as_uuid=True), ForeignKey("conversation_sessions.id", ondelete="CASCADE"), index=True)
     role = Column(String(50), nullable=False)
     content = Column(Text, nullable=False)
     meta_data = Column(JSONB)
@@ -297,7 +297,7 @@ class DataSource(Base):
     gcs_path = Column(String(1000), nullable=False)
     file_size_bytes = Column(BigInteger)
     status = Column(String(50), index=True)
-    meta_data = Column(JSONB)
+    meta_data = Column("metadata", JSONB)
     processing_results = Column(JSONB)
     records_imported = Column(Integer)
     error_details = Column(JSONB)

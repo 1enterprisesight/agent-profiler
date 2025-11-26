@@ -76,8 +76,10 @@ async def google_auth(request: GoogleTokenRequest):
         }
 
         # Create JWT token
+        # Use Google's unique user ID as subject for proper user isolation
+        google_user_id = idinfo.get('sub', '')
         token_data = {
-            "sub": email,  # Use email as the subject
+            "sub": google_user_id,  # Google's unique user ID
             "email": email,
             "name": user_data["name"],
             "picture": user_data["picture"],

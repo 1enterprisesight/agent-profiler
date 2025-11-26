@@ -125,10 +125,11 @@ class BenchmarkAgent(BaseAgent):
                 core_data,
                 custom_data
             FROM clients
+            WHERE user_id = :user_id
             LIMIT 1000
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows:
@@ -187,7 +188,7 @@ class BenchmarkAgent(BaseAgent):
             limit = payload.get("limit", 20)
 
             # Fetch clients with risk data
-            query = f"""
+            query = """
             SELECT
                 id,
                 client_name,
@@ -195,11 +196,12 @@ class BenchmarkAgent(BaseAgent):
                 core_data,
                 computed_metrics
             FROM clients
-            WHERE computed_metrics IS NOT NULL
+            WHERE user_id = :user_id
+              AND computed_metrics IS NOT NULL
             LIMIT 500
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows:
@@ -268,10 +270,11 @@ class BenchmarkAgent(BaseAgent):
                 core_data,
                 custom_data
             FROM clients
+            WHERE user_id = :user_id
             LIMIT 500
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows:
@@ -343,11 +346,12 @@ class BenchmarkAgent(BaseAgent):
                 custom_data,
                 computed_metrics
             FROM clients
+            WHERE user_id = :user_id
             ORDER BY RANDOM()
             LIMIT 200
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows:

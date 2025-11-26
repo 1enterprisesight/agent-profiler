@@ -184,6 +184,11 @@ class PatternRecognitionAgent(BaseAgent):
             )
 
             # Fetch data and calculate statistics
+            # Whitelist allowed fields to prevent SQL injection
+            allowed_fields = ['aum', 'engagement_score', 'risk_score', 'age', 'account_value', 'years_client']
+            if field not in allowed_fields:
+                field = 'aum'  # Default to safe field
+
             query = f"""
             SELECT
                 id,
@@ -192,11 +197,12 @@ class PatternRecognitionAgent(BaseAgent):
                 core_data,
                 custom_data
             FROM clients
-            WHERE core_data->>'{field}' IS NOT NULL
+            WHERE user_id = :user_id
+              AND core_data->>'{field}' IS NOT NULL
               AND (core_data->>'{field}')::numeric > 0
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows or len(rows) < 10:
@@ -264,7 +270,7 @@ class PatternRecognitionAgent(BaseAgent):
             )
 
             # Fetch multi-field data
-            data = await self._fetch_multivariate_data(fields, db)
+            data = await self._fetch_multivariate_data(fields, user_id, db)
 
             if not data or len(data) < 30:
                 return AgentResponse(
@@ -329,11 +335,12 @@ class PatternRecognitionAgent(BaseAgent):
                 custom_data,
                 computed_metrics
             FROM clients
+            WHERE user_id = :user_id
             ORDER BY RANDOM()
             LIMIT 100
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows:
@@ -393,21 +400,29 @@ class PatternRecognitionAgent(BaseAgent):
     async def _fetch_multivariate_data(
         self,
         fields: List[str],
+        user_id: str,
         db: AsyncSession
     ) -> List[Dict[str, Any]]:
         """Fetch multi-field data for correlation analysis"""
-        field_selects = [f"(core_data->>'{f}')::numeric as {f}" for f in fields]
+        # Whitelist allowed fields to prevent SQL injection
+        allowed_fields = ['aum', 'engagement_score', 'risk_score', 'age', 'account_value', 'years_client']
+        safe_fields = [f for f in fields if f in allowed_fields]
+        if not safe_fields:
+            safe_fields = ['aum']  # Default to safe field
+
+        field_selects = [f"(core_data->>'{f}')::numeric as {f}" for f in safe_fields]
         query = f"""
         SELECT
             id,
             client_name,
             {', '.join(field_selects)}
         FROM clients
-        WHERE {' AND '.join([f"core_data->>'{f}' IS NOT NULL" for f in fields])}
+        WHERE user_id = :user_id
+          AND {' AND '.join([f"core_data->>'{f}' IS NOT NULL" for f in safe_fields])}
         LIMIT 500
         """
 
-        result = await db.execute(text(query))
+        result = await db.execute(text(query), {"user_id": user_id})
         rows = result.fetchall()
 
         if rows:

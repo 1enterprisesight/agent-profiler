@@ -14,7 +14,7 @@ import uuid
 import structlog
 
 from app.database import get_db_session
-from app.auth import get_current_user
+from app.auth import get_current_user, User
 from app.models import Conversation, ConversationMessage
 from app.agents.base import AgentMessage, AgentStatus
 from app.agents.orchestrator import OrchestratorAgent
@@ -83,7 +83,7 @@ class ConversationSummary(BaseModel):
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    user_id: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -91,6 +91,7 @@ async def chat(
 
     The orchestrator will route the request to the appropriate specialized agent
     """
+    user_id = current_user.user_id
     try:
         conversation_id = request.conversation_id or str(uuid.uuid4())
 
@@ -198,6 +199,7 @@ async def chat(
                 "text": response_text,
                 "agents_used": agents_used,
                 "execution_plan": execution_plan,
+                "workflow_results": workflow_results,
                 "workflow_summary": {
                     "total_steps": len(workflow_results),
                     "successful_steps": sum(1 for r in workflow_results if r.get("success"))
@@ -225,12 +227,13 @@ async def chat(
 
 @router.get("/", response_model=List[ConversationSummary])
 async def list_conversations(
-    user_id: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
     List all conversations for the current user
     """
+    user_id = current_user.user_id
     try:
         result = await db.execute(
             select(Conversation)
@@ -266,12 +269,13 @@ async def list_conversations(
 @router.get("/{conversation_id}/messages")
 async def get_conversation_messages(
     conversation_id: str,
-    user_id: str = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
     Get all messages in a conversation
     """
+    user_id = current_user.user_id
     try:
         result = await db.execute(
             select(Conversation).where(

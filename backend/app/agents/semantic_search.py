@@ -135,6 +135,7 @@ class SemanticSearchAgent(BaseAgent):
             search_results = await self._execute_text_search(
                 expanded_terms,
                 fields,
+                user_id,
                 db
             )
 
@@ -240,19 +241,32 @@ Terms:"""
         self,
         search_terms: List[str],
         fields: List[str],
+        user_id: str,
         db: AsyncSession,
     ) -> List[Dict[str, Any]]:
         """
         Execute text search using ILIKE on JSONB fields
         """
-        # Build ILIKE conditions for each term and field
-        conditions = []
-        for term in search_terms:
-            for field in fields:
-                # Search in custom_data JSONB field
-                conditions.append(f"custom_data->>'{field}' ILIKE '%{term}%'")
+        # Whitelist allowed fields to prevent SQL injection
+        allowed_fields = ['notes', 'description', 'goals', 'interests', 'comments', 'biography']
+        safe_fields = [f for f in fields if f in allowed_fields]
+        if not safe_fields:
+            safe_fields = ['notes', 'description']
 
-        where_clause = " OR ".join(conditions)
+        # Build parameterized ILIKE conditions
+        conditions = []
+        params = {"user_id": user_id}
+        param_idx = 0
+        for term in search_terms:
+            # Sanitize term by escaping special characters
+            safe_term = term.replace('%', '\\%').replace('_', '\\_')
+            for field in safe_fields:
+                param_name = f"term_{param_idx}"
+                conditions.append(f"custom_data->>'{field}' ILIKE :{param_name}")
+                params[param_name] = f"%{safe_term}%"
+                param_idx += 1
+
+        where_clause = " OR ".join(conditions) if conditions else "FALSE"
 
         query = f"""
         SELECT
@@ -263,11 +277,12 @@ Terms:"""
             custom_data,
             computed_metrics
         FROM clients
-        WHERE {where_clause}
+        WHERE user_id = :user_id
+          AND ({where_clause})
         LIMIT 100
         """
 
-        result = await db.execute(text(query))
+        result = await db.execute(text(query), params)
         rows = result.fetchall()
 
         if rows:
@@ -321,6 +336,11 @@ Terms:"""
                     error="No query text provided"
                 )
 
+            # Whitelist allowed fields to prevent SQL injection
+            allowed_fields = ['client_name', 'contact_email', 'company_name']
+            if field not in allowed_fields:
+                field = 'client_name'
+
             # Use PostgreSQL's similarity functions
             query = f"""
             SELECT
@@ -331,14 +351,15 @@ Terms:"""
                 custom_data,
                 SIMILARITY({field}, :query) as similarity_score
             FROM clients
-            WHERE {field} % :query
+            WHERE user_id = :user_id
+              AND {field} % :query
             ORDER BY similarity_score DESC
             LIMIT 50
             """
 
             result = await db.execute(
                 text(query),
-                {"query": query_text}
+                {"query": query_text, "user_id": user_id}
             )
             rows = result.fetchall()
 
@@ -425,11 +446,12 @@ Terms:"""
                 contact_email,
                 custom_data->>'description' as description
             FROM clients
-            WHERE custom_data->>'description' IS NOT NULL
+            WHERE user_id = :user_id
+              AND custom_data->>'description' IS NOT NULL
             LIMIT 500
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows:

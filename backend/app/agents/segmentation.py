@@ -125,10 +125,11 @@ class SegmentationAgent(BaseAgent):
                 custom_data,
                 computed_metrics
             FROM clients
+            WHERE user_id = :user_id
             LIMIT 500
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows:
@@ -224,10 +225,11 @@ class SegmentationAgent(BaseAgent):
                 custom_data,
                 computed_metrics
             FROM clients
+            WHERE user_id = :user_id
             LIMIT 500
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows:
@@ -296,11 +298,12 @@ class SegmentationAgent(BaseAgent):
                 custom_data,
                 computed_metrics
             FROM clients
+            WHERE user_id = :user_id
             ORDER BY RANDOM()
             LIMIT 200
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows:
@@ -371,10 +374,11 @@ class SegmentationAgent(BaseAgent):
                 custom_data,
                 computed_metrics
             FROM clients
+            WHERE user_id = :user_id
             LIMIT 500
             """
 
-            result = await db.execute(text(query))
+            result = await db.execute(text(query), {"user_id": user_id})
             rows = result.fetchall()
 
             if not rows:
