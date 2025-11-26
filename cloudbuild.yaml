@@ -81,10 +81,6 @@ options:
   machineType: 'N1_HIGHCPU_8'
   logging: CLOUD_LOGGING_ONLY
 
-substitutions:
-  _SERVICE_NAME: 'agent-profiler-api'
-  _REGION: 'us-central1'
-
 # ============================================================================
 # Tags for build tracking
 # ============================================================================

@@ -341,4 +341,4 @@ class UserSession(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
     last_activity_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
     is_active = Column(Boolean, default=True, index=True)
-    metadata = Column(JSONB)
+    session_metadata = Column("metadata", JSONB)  # 'metadata' is reserved in SQLAlchemy
