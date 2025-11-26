@@ -9,15 +9,16 @@
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
+    "@react-oauth/google": "^0.12.2",
+    "@tanstack/react-query": "^5.17.9",
+    "axios": "^1.6.5",
+    "clsx": "^2.1.0",
+    "lucide-react": "^0.309.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-flow-renderer": "^10.3.17",
-    "axios": "^1.6.5",
-    "zustand": "^4.4.7",
-    "@tanstack/react-query": "^5.17.9",
-    "lucide-react": "^0.309.0",
-    "clsx": "^2.1.0",
-    "tailwind-merge": "^2.2.0"
+    "tailwind-merge": "^2.2.0",
+    "zustand": "^4.4.7"
   },
   "devDependencies": {
     "@types/react": "^18.2.48",

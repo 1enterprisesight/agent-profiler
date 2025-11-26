@@ -264,8 +264,9 @@ async def global_exception_handler(request, exc):
 # IMPORT ROUTERS
 # ============================================================================
 
-from app.routers import conversations, uploads
+from app.routers import auth, conversations, uploads
 
+app.include_router(auth.router)
 app.include_router(conversations.router)
 app.include_router(uploads.router)
 

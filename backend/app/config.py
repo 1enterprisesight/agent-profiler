@@ -29,9 +29,9 @@ class Settings(BaseSettings):
     gemini_flash_model: str = "gemini-2.0-flash-exp"
     gemini_pro_model: str = "gemini-1.5-pro"
 
-    # Authentication (optional - will be implemented later)
-    google_oauth_client_id: str = "placeholder-client-id"
-    google_oauth_client_secret: str = "placeholder-client-secret"
+    # Authentication - Google Workspace OAuth
+    google_oauth_client_id: str = "1041758516609-p7k2rjrc8efpob1dvqir2d4v62l0hl2b.apps.googleusercontent.com"
+    google_oauth_client_secret: str = ""  # Not needed for ID token verification
     allowed_domain: str = "enterprisesight.com"
     jwt_secret_key: str = "placeholder-secret-key-change-in-production"
     jwt_algorithm: str = "HS256"
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     app_env: str = "development"
     log_level: str = "INFO"
     enable_cors: bool = True
-    cors_origins: str = "http://localhost:3000"
+    cors_origins: str = "https://agent-profiler-frontend-1041758516609.us-central1.run.app"
 
     # Agent Configuration
     agent_timeout_seconds: int = 300
