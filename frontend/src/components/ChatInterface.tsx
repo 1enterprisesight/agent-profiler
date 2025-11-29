@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Loader2, RotateCcw, Wifi, WifiOff } from 'lucide-react';
+import { Send, Loader2, RotateCcw, Wifi } from 'lucide-react';
 import type { ChatMessage, TransparencyEvent } from '@/types';
 import { chatApi, type CompleteEvent } from '@/services/api';
 
@@ -14,18 +14,19 @@ interface ChatInterfaceProps {
 
 export function ChatInterface({
   onAgentsActive,
-  onWorkflowUpdate,
+  onWorkflowUpdate: _onWorkflowUpdate,
   onTransparencyEvents,
   onProcessingChange,
   onStreamingChange,
   onNewChat
 }: ChatInterfaceProps) {
+  // Note: _onWorkflowUpdate reserved for future workflow state management
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [isStreaming, setIsStreaming] = useState(false);
-  const [streamStatus, setStreamStatus] = useState<'idle' | 'connected' | 'error'>('idle');
+  const [_streamStatus, setStreamStatus] = useState<'idle' | 'connected' | 'error'>('idle');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const streamEventsRef = useRef<TransparencyEvent[]>([]);

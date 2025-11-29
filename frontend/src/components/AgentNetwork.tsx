@@ -118,8 +118,9 @@ export function AgentNetwork({
   activeAgents = [],
   transparencyEvents = [],
   isProcessing = false,
-  isStreaming = false,
+  isStreaming: _isStreaming = false,
 }: AgentNetworkProps) {
+  // Note: _isStreaming reserved for enhanced streaming animations
   const [agentStates, setAgentStates] = useState<(Agent & { visualState: AgentVisualState; currentEvent?: TransparencyEvent })[]>(
     agents.map(a => ({ ...a, visualState: 'idle' as AgentVisualState }))
   );

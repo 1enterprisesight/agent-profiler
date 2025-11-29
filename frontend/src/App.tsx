@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Wifi, WifiOff, Radio } from 'lucide-react';
+import { Wifi, Radio } from 'lucide-react';
 import { AgentNetwork } from './components/AgentNetwork';
 import { ChatInterface } from './components/ChatInterface';
 import { WorkflowDisplay } from './components/WorkflowDisplay';
