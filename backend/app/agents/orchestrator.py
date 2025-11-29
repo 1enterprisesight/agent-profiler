@@ -1,173 +1,71 @@
 """
-Orchestrator Agent
-Coordinates multi-agent workflows using sequential execution with Gemini Pro
+Orchestrator Agent - Phase D: Dynamic Discovery
+Coordinates multi-agent workflows with:
+- Dynamic agent discovery (no hardcoded capabilities)
+- Complete transparency (emits events for every step)
+- Data source awareness (includes user's sources in planning)
 """
 
 from typing import Dict, Any, Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 import json
 from datetime import datetime
 
 import vertexai
 from vertexai.preview.generative_models import GenerativeModel
 
-from app.agents.base import BaseAgent, AgentMessage, AgentResponse, AgentStatus
+from app.agents.base import BaseAgent, AgentMessage, AgentResponse, AgentStatus, EventType
+from app.agents.schema_utils import get_schema_context
 from app.config import settings
-
-
-# Agent Capability Registry
-AGENT_CAPABILITIES = {
-    "data_ingestion": {
-        "purpose": "Import and process data from various sources",
-        "model": "flash",  # Use Flash for schema discovery
-        "capabilities": [
-            "upload_csv_files",
-            "connect_to_crms",
-            "discover_schemas",
-            "map_fields_intelligently",
-            "validate_and_import_data"
-        ],
-        "use_cases": [
-            "Upload CSV file with client data",
-            "Connect to Salesforce",
-            "Import data from Wealthbox",
-            "Sync CRM data"
-        ],
-        "never_use_for": [
-            "Querying existing data",
-            "Analysis or calculations",
-            "Searching or filtering data"
-        ]
-    },
-    "sql_analytics": {
-        "purpose": "Quantitative analysis on structured data using SQL",
-        "model": "pro",  # Use Pro for complex SQL generation
-        "capabilities": [
-            "mathematical_operations",
-            "aggregations_sum_avg_count",
-            "date_time_calculations",
-            "structured_filtering_exact_matches",
-            "grouping_and_sorting",
-            "joins_across_tables",
-            "statistical_calculations"
-        ],
-        "use_cases": [
-            "Count clients by segment",
-            "Calculate average AUM per client",
-            "Find clients where last_contact > 90 days ago",
-            "Sum total assets by advisor",
-            "Calculate year-over-year growth"
-        ],
-        "never_use_for": [
-            "LIKE or regex queries on unstructured text",
-            "Fuzzy text matching",
-            "Semantic similarity searches",
-            "Natural language search in notes/descriptions"
-        ]
-    },
-    "semantic_search": {
-        "purpose": "Search unstructured text using semantic understanding",
-        "model": "pro",  # Use Pro for semantic understanding
-        "capabilities": [
-            "fuzzy_text_matching",
-            "semantic_similarity_search",
-            "natural_language_queries_on_text",
-            "embedding_based_search",
-            "concept_matching"
-        ],
-        "use_cases": [
-            "Find clients with notes mentioning 'retirement planning'",
-            "Search for similar client descriptions",
-            "Find clients interested in 'ESG investing'",
-            "Fuzzy match on client names"
-        ],
-        "never_use_for": [
-            "Math or calculations",
-            "Date/time operations",
-            "Exact value filtering",
-            "Aggregations"
-        ]
-    },
-    "pattern_recognition": {
-        "purpose": "Identify trends, anomalies, and patterns in data",
-        "model": "pro",  # Use Pro for complex pattern analysis
-        "capabilities": [
-            "trend_detection",
-            "anomaly_detection",
-            "correlation_analysis",
-            "time_series_analysis",
-            "change_point_detection"
-        ],
-        "use_cases": [
-            "Identify trends in client engagement",
-            "Detect unusual account activity",
-            "Find correlations between client behaviors"
-        ]
-    },
-    "segmentation": {
-        "purpose": "Group clients into meaningful cohorts",
-        "model": "pro",
-        "capabilities": [
-            "client_clustering",
-            "similarity_grouping",
-            "cohort_analysis",
-            "persona_identification"
-        ],
-        "use_cases": [
-            "Segment clients by engagement level",
-            "Find similar clients to high-value ones",
-            "Create client personas"
-        ]
-    },
-    "benchmark": {
-        "purpose": "Evaluate data quality and risk metrics",
-        "model": "flash",  # Use Flash for rule-based evaluations
-        "capabilities": [
-            "data_completeness_scoring",
-            "risk_assessment",
-            "compliance_checking",
-            "quality_metrics"
-        ],
-        "use_cases": [
-            "Check data completeness",
-            "Assess client risk levels",
-            "Evaluate compliance status"
-        ]
-    },
-    "recommendation": {
-        "purpose": "Generate actionable recommendations",
-        "model": "pro",
-        "capabilities": [
-            "action_prioritization",
-            "improvement_suggestions",
-            "next_best_action",
-            "personalized_recommendations"
-        ],
-        "use_cases": [
-            "Suggest which clients to contact first",
-            "Recommend data quality improvements",
-            "Prioritize outreach actions"
-        ]
-    }
-}
 
 
 class OrchestratorAgent(BaseAgent):
     """
-    Orchestrator Agent - Coordinates multi-agent workflows
+    Orchestrator Agent - Phase D: Dynamic Discovery
 
     Uses Gemini Pro to:
     1. Break down user request into execution plan
-    2. Route to agents sequentially
-    3. Evaluate results and decide next steps
-    4. Aggregate final results
+    2. Route to agents sequentially (discovered dynamically)
+    3. Emit transparency events at every step
+    4. Aggregate final results with data source awareness
     """
 
+    @classmethod
+    def get_agent_info(cls) -> Dict[str, Any]:
+        """Orchestrator describes itself for dynamic discovery"""
+        return {
+            "name": "orchestrator",
+            "purpose": "Coordinates multi-agent workflows for complex requests",
+            "when_to_use": [
+                "User has a complex request requiring multiple agents",
+                "Request needs to be broken down into steps",
+                "Multiple data operations are needed"
+            ],
+            "when_not_to_use": [
+                "Direct single-agent requests",
+                "Simple queries that don't need coordination"
+            ],
+            "example_tasks": [
+                "Upload this CSV and then analyze the clients",
+                "Find high-value clients and segment them by engagement",
+                "Compare data across my different sources"
+            ],
+            "data_source_aware": True
+        }
+
+    def get_capabilities(self) -> Dict[str, Dict[str, Any]]:
+        """Orchestrator's internal capabilities"""
+        return {
+            "orchestrate": {
+                "description": "Plan and execute multi-agent workflow",
+                "examples": ["coordinate workflow", "multi-step request", "complex analysis"],
+                "method": "_orchestrate_workflow"
+            }
+        }
+
     def __init__(self, agent_registry: Optional[Dict[str, BaseAgent]] = None):
-        super().__init__(
-            name="orchestrator",
-            description="Coordinates multi-agent workflows for complex requests"
-        )
+        super().__init__()
 
         # Initialize Vertex AI
         vertexai.init(
@@ -180,6 +78,189 @@ class OrchestratorAgent(BaseAgent):
 
         # Agent registry for executing steps
         self.agent_registry = agent_registry or {}
+
+        # Dynamically discovered capabilities (populated when agents are registered)
+        self._agent_capabilities: Dict[str, Dict[str, Any]] = {}
+
+    def register_agents(self, agents: Dict[str, BaseAgent]) -> None:
+        """
+        Register agents and discover their capabilities dynamically.
+        Called after all agents are instantiated.
+        """
+        self.agent_registry = agents
+        self._agent_capabilities = self._discover_capabilities()
+        self.logger.info(
+            "agents_registered",
+            agent_count=len(agents),
+            agents=list(agents.keys())
+        )
+
+    # Common alternative names that LLMs might generate -> correct agent name
+    AGENT_NAME_ALIASES = {
+        # Data exploration/profiling -> data_discovery
+        "data_profiler": "data_discovery",
+        "data_profile": "data_discovery",
+        "profiler": "data_discovery",
+        "data_explorer": "data_discovery",
+        "explorer": "data_discovery",
+        "describe_data": "data_discovery",
+        # Analytics aliases
+        "data_analysis": "sql_analytics",
+        "data_analyzer": "sql_analytics",
+        "analytics": "sql_analytics",
+        # Search aliases
+        "search": "semantic_search",
+        "text_search": "semantic_search",
+        "client_search": "semantic_search",
+        # Segmentation aliases
+        "segment": "segmentation",
+        "segments": "segmentation",
+        # Benchmark aliases
+        "benchmark_agent": "benchmark",
+        "benchmarking": "benchmark",
+        "compare": "benchmark",
+        # Recommendation aliases
+        "recommend": "recommendation",
+        "recommendations": "recommendation",
+        "ingest": "data_ingestion",
+        "ingestion": "data_ingestion",
+        "upload": "data_ingestion",
+        "pattern": "pattern_recognition",
+        "patterns": "pattern_recognition",
+        "recognize": "pattern_recognition",
+    }
+
+    def _normalize_agent_name(self, agent_name: str) -> str:
+        """Map alternative/incorrect agent names to correct ones."""
+        normalized = agent_name.lower().strip()
+        if normalized in self.agent_registry:
+            return normalized
+        if normalized in self.AGENT_NAME_ALIASES:
+            correct_name = self.AGENT_NAME_ALIASES[normalized]
+            self.logger.info(
+                "agent_name_normalized",
+                original=agent_name,
+                normalized=correct_name
+            )
+            return correct_name
+        return agent_name  # Return original if no mapping found
+
+    def _discover_capabilities(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Dynamically discover agent capabilities from their get_agent_info() methods.
+        No hardcoding - agents describe themselves.
+        """
+        capabilities = {}
+        for name, agent in self.agent_registry.items():
+            try:
+                # Get agent's self-description
+                info = agent.get_agent_info()
+                capabilities[name] = {
+                    "name": info.get("name", name),
+                    "purpose": info.get("purpose", ""),
+                    "when_to_use": info.get("when_to_use", []),
+                    "when_not_to_use": info.get("when_not_to_use", []),
+                    "example_tasks": info.get("example_tasks", []),
+                    "data_source_aware": info.get("data_source_aware", False),
+                }
+                self.logger.debug(
+                    "agent_capability_discovered",
+                    agent=name,
+                    purpose=info.get("purpose", "")
+                )
+            except Exception as e:
+                self.logger.warning(
+                    "failed_to_discover_agent_capability",
+                    agent=name,
+                    error=str(e)
+                )
+        return capabilities
+
+    async def _get_user_data_sources(
+        self,
+        user_id: str,
+        db: AsyncSession
+    ) -> List[Dict[str, Any]]:
+        """
+        Get summary of user's data sources for planning context.
+        Orchestrator includes this in the planning prompt.
+        """
+        try:
+            query = """
+            SELECT
+                source_type,
+                COUNT(*) as client_count,
+                MAX(synced_at) as last_sync
+            FROM clients
+            WHERE user_id = :user_id
+            GROUP BY source_type
+            ORDER BY client_count DESC
+            """
+            result = await db.execute(text(query), {"user_id": user_id})
+            rows = result.fetchall()
+            columns = result.keys()
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            self.logger.warning(
+                "failed_to_get_data_sources",
+                user_id=user_id,
+                error=str(e)
+            )
+            return []
+
+    async def _get_typed_schema_context(
+        self,
+        user_id: str,
+        db: AsyncSession
+    ) -> Dict[str, Any]:
+        """
+        Get typed schema context for routing queries to the right agent.
+        Returns categorized fields: numeric/date → SQL, text → Semantic Search.
+        """
+        return await get_schema_context(db, user_id)
+
+    async def _get_data_discovery_context(
+        self,
+        user_id: str,
+        db: AsyncSession
+    ) -> Dict[str, Any]:
+        """
+        Get data discovery context including thresholds and statistics.
+        Used to provide semantic meaning to vague terms in user queries.
+        """
+        try:
+            query = """
+            SELECT
+                total_clients,
+                sources_summary,
+                field_completeness,
+                numeric_stats,
+                computed_thresholds,
+                last_computed_at
+            FROM data_metadata
+            WHERE user_id = :user_id
+            """
+            result = await db.execute(text(query), {"user_id": user_id})
+            row = result.fetchone()
+
+            if row:
+                import json
+                return {
+                    "total_clients": row[0],
+                    "sources_summary": row[1] if isinstance(row[1], dict) else json.loads(row[1] or "{}"),
+                    "field_completeness": row[2] if isinstance(row[2], dict) else json.loads(row[2] or "{}"),
+                    "numeric_stats": row[3] if isinstance(row[3], dict) else json.loads(row[3] or "{}"),
+                    "computed_thresholds": row[4] if isinstance(row[4], dict) else json.loads(row[4] or "{}"),
+                    "last_computed": row[5].isoformat() if row[5] else None,
+                }
+            return {}
+        except Exception as e:
+            self.logger.warning(
+                "failed_to_get_discovery_context",
+                user_id=user_id,
+                error=str(e)
+            )
+            return {}
 
     async def _execute_internal(
         self,
@@ -219,27 +300,84 @@ class OrchestratorAgent(BaseAgent):
         db: AsyncSession,
     ) -> AgentResponse:
         """
-        Orchestrate multi-agent workflow
+        Orchestrate multi-agent workflow with full transparency
 
         Process:
-        1. Create execution plan
-        2. Execute each step sequentially
-        3. Evaluate results and adapt plan
-        4. Aggregate final results
+        1. Emit 'received' event
+        2. Get user's data sources for context
+        3. Emit 'thinking' event while planning
+        4. Create execution plan with Gemini
+        5. Emit 'decision' event with plan
+        6. Execute each step with 'action'/'result' events
+        7. Aggregate final results
         """
+        workflow_start = datetime.utcnow()
+
         try:
-            # Step 1: Create execution plan
+            # TRANSPARENCY: Received event
+            await self.emit_event(
+                db=db,
+                session_id=conversation_id,
+                user_id=user_id,
+                event_type=EventType.RECEIVED,
+                title="Received user request",
+                details={"user_query": user_query, "context": context},
+                step_number=0
+            )
+
+            # Get user's data sources for planning context
+            data_sources = await self._get_user_data_sources(user_id, db)
+
+            # Get data discovery context (thresholds, statistics)
+            discovery_context = await self._get_data_discovery_context(user_id, db)
+
+            # Get typed schema context (field types for routing)
+            typed_schema = await self._get_typed_schema_context(user_id, db)
+
+            # TRANSPARENCY: Thinking event
+            await self.emit_event(
+                db=db,
+                session_id=conversation_id,
+                user_id=user_id,
+                event_type=EventType.THINKING,
+                title="Analyzing request and planning workflow...",
+                details={
+                    "analyzing": user_query,
+                    "available_agents": list(self._agent_capabilities.keys()),
+                    "user_data_sources": data_sources,
+                    "has_discovery_context": bool(discovery_context)
+                },
+                step_number=0
+            )
+
             self.logger.info(
                 "creating_execution_plan",
                 user_query=user_query,
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
+                data_sources=len(data_sources),
+                has_thresholds=bool(discovery_context.get("computed_thresholds"))
             )
+
+            # Add data sources, discovery context, and typed schema to planning context
+            context["user_data_sources"] = data_sources
+            context["discovery_context"] = discovery_context
+            context["typed_schema"] = typed_schema
 
             plan_response = await self._create_execution_plan(
                 user_query, context, conversation_id, user_id, db
             )
 
             if not plan_response["success"]:
+                # TRANSPARENCY: Error event
+                await self.emit_event(
+                    db=db,
+                    session_id=conversation_id,
+                    user_id=user_id,
+                    event_type=EventType.ERROR,
+                    title="Failed to create execution plan",
+                    details={"error": plan_response.get("error")},
+                    step_number=0
+                )
                 return AgentResponse(
                     status=AgentStatus.FAILED,
                     error=f"Failed to create plan: {plan_response.get('error')}"
@@ -247,11 +385,45 @@ class OrchestratorAgent(BaseAgent):
 
             execution_plan = plan_response["plan"]
 
+            # TRANSPARENCY: Decision event - plan created
+            agents_in_plan = [step["agent"] for step in execution_plan["steps"]]
+            await self.emit_event(
+                db=db,
+                session_id=conversation_id,
+                user_id=user_id,
+                event_type=EventType.DECISION,
+                title=f"Created {len(execution_plan['steps'])}-step plan using {', '.join(agents_in_plan)}",
+                details={
+                    "execution_plan": execution_plan,
+                    "overall_strategy": execution_plan.get("overall_strategy", ""),
+                    "agents_selected": agents_in_plan
+                },
+                step_number=0
+            )
+
             # Step 2: Execute plan sequentially
             workflow_results = []
             intermediate_context = {**context}
 
             for step_num, step in enumerate(execution_plan["steps"], 1):
+                agent_name = step["agent"]
+                task_desc = step.get("reasoning", step.get("action", ""))
+
+                # TRANSPARENCY: Action event - starting step
+                await self.emit_event(
+                    db=db,
+                    session_id=conversation_id,
+                    user_id=user_id,
+                    event_type=EventType.ACTION,
+                    title=f"Step {step_num}: Delegating to {agent_name}",
+                    details={
+                        "agent": agent_name,
+                        "task": task_desc,
+                        "parameters": step.get("parameters", {})
+                    },
+                    step_number=step_num
+                )
+
                 self.logger.info(
                     "executing_workflow_step",
                     step=step_num,
@@ -259,6 +431,8 @@ class OrchestratorAgent(BaseAgent):
                     agent=step["agent"],
                     action=step["action"]
                 )
+
+                step_start = datetime.utcnow()
 
                 # Execute this step
                 step_result = await self._execute_step(
@@ -269,14 +443,47 @@ class OrchestratorAgent(BaseAgent):
                     db
                 )
 
+                step_duration = int((datetime.utcnow() - step_start).total_seconds() * 1000)
+
                 workflow_results.append({
                     "step": step_num,
                     "agent": step["agent"],
                     "action": step["action"],
                     "result": step_result["result"],
                     "success": step_result["success"],
-                    "error": step_result.get("error")
+                    "error": step_result.get("error"),
+                    "duration_ms": step_duration
                 })
+
+                # TRANSPARENCY: Result event for step
+                if step_result["success"]:
+                    await self.emit_event(
+                        db=db,
+                        session_id=conversation_id,
+                        user_id=user_id,
+                        event_type=EventType.RESULT,
+                        title=f"Step {step_num} completed: {agent_name}",
+                        details={
+                            "agent": agent_name,
+                            "result_summary": self._summarize_step_result(step_result["result"])
+                        },
+                        step_number=step_num,
+                        duration_ms=step_duration
+                    )
+                else:
+                    await self.emit_event(
+                        db=db,
+                        session_id=conversation_id,
+                        user_id=user_id,
+                        event_type=EventType.ERROR,
+                        title=f"Step {step_num} failed: {agent_name}",
+                        details={
+                            "agent": agent_name,
+                            "error": step_result.get("error")
+                        },
+                        step_number=step_num,
+                        duration_ms=step_duration
+                    )
 
                 # If step failed, decide whether to continue or abort
                 if not step_result["success"]:
@@ -315,6 +522,25 @@ class OrchestratorAgent(BaseAgent):
                 db
             )
 
+            workflow_duration = int((datetime.utcnow() - workflow_start).total_seconds() * 1000)
+
+            # TRANSPARENCY: Final result event
+            await self.emit_event(
+                db=db,
+                session_id=conversation_id,
+                user_id=user_id,
+                event_type=EventType.RESULT,
+                title=f"Workflow complete: {len(execution_plan['steps'])} steps executed",
+                details={
+                    "answer_preview": aggregated_result.get("answer", "")[:200] + "..." if len(aggregated_result.get("answer", "")) > 200 else aggregated_result.get("answer", ""),
+                    "key_findings": aggregated_result.get("key_findings", []),
+                    "agents_used": [step["agent"] for step in execution_plan["steps"]],
+                    "total_duration_ms": workflow_duration
+                },
+                step_number=len(execution_plan["steps"]) + 1,
+                duration_ms=workflow_duration
+            )
+
             return AgentResponse(
                 status=AgentStatus.COMPLETED,
                 result={
@@ -326,7 +552,8 @@ class OrchestratorAgent(BaseAgent):
                 metadata={
                     "orchestration_model": settings.gemini_pro_model,
                     "total_steps": len(execution_plan["steps"]),
-                    "successful_steps": sum(1 for r in workflow_results if r["success"])
+                    "successful_steps": sum(1 for r in workflow_results if r["success"]),
+                    "total_duration_ms": workflow_duration
                 }
             )
 
@@ -337,6 +564,19 @@ class OrchestratorAgent(BaseAgent):
                 user_query=user_query,
                 exc_info=True,
             )
+            # TRANSPARENCY: Error event for unexpected failure
+            try:
+                await self.emit_event(
+                    db=db,
+                    session_id=conversation_id,
+                    user_id=user_id,
+                    event_type=EventType.ERROR,
+                    title="Orchestration failed unexpectedly",
+                    details={"error": str(e)},
+                    step_number=0
+                )
+            except Exception:
+                pass  # Don't fail on logging failure
             return AgentResponse(
                 status=AgentStatus.FAILED,
                 error=f"Orchestration failed: {str(e)}"
@@ -392,30 +632,120 @@ class OrchestratorAgent(BaseAgent):
         user_query: str,
         context: Dict[str, Any]
     ) -> str:
-        """Build prompt for Gemini Pro to create execution plan"""
+        """
+        Build prompt for Gemini Pro to create execution plan.
+        Uses DYNAMICALLY DISCOVERED agent capabilities - no hardcoding.
+        """
 
-        # Build agent capabilities description
+        # Build agent capabilities from dynamic discovery
         capabilities_desc = ""
-        for agent_name, details in AGENT_CAPABILITIES.items():
+        for agent_name, info in self._agent_capabilities.items():
             capabilities_desc += f"\n{agent_name}:\n"
-            capabilities_desc += f"  Purpose: {details['purpose']}\n"
-            capabilities_desc += f"  Model: Gemini {details['model'].upper()}\n"
-            capabilities_desc += f"  Capabilities: {', '.join(details['capabilities'])}\n"
-            capabilities_desc += f"  Use cases: {'; '.join(details['use_cases'])}\n"
-            if "never_use_for" in details:
-                capabilities_desc += f"  NEVER use for: {'; '.join(details['never_use_for'])}\n"
+            capabilities_desc += f"  Purpose: {info['purpose']}\n"
+            if info.get("when_to_use"):
+                capabilities_desc += f"  Use when: {'; '.join(info['when_to_use'])}\n"
+            if info.get("when_not_to_use"):
+                capabilities_desc += f"  NEVER use for: {'; '.join(info['when_not_to_use'])}\n"
+            if info.get("example_tasks"):
+                capabilities_desc += f"  Examples: {'; '.join(info['example_tasks'])}\n"
+
+        # Build typed schema context (for field-aware routing)
+        typed_schema = context.get("typed_schema", {})
+        schema_desc = ""
+        if typed_schema.get("has_schema"):
+            schema_desc = "\n\nDISCOVERED DATA FIELDS (use for routing):\n"
+
+            numeric_fields = typed_schema.get("numeric_fields", [])
+            if numeric_fields:
+                field_names = [f["name"] for f in numeric_fields]
+                schema_desc += f"  NUMERIC fields (→ SQL Analytics): {', '.join(field_names)}\n"
+
+            date_fields = typed_schema.get("date_fields", [])
+            if date_fields:
+                field_names = [f["name"] for f in date_fields]
+                schema_desc += f"  DATE fields (→ SQL Analytics): {', '.join(field_names)}\n"
+
+            text_fields = typed_schema.get("text_fields", [])
+            if text_fields:
+                field_names = [f["name"] for f in text_fields]
+                schema_desc += f"  TEXT fields (→ Semantic Search): {', '.join(field_names)}\n"
+
+            schema_desc += """
+ROUTING RULE: If the query mentions a field name above, route to the agent that handles that field type!
+- "show top companies" + companies is TEXT → Semantic Search (for pattern matching)
+- "show total revenue" + revenue is NUMERIC → SQL Analytics (for aggregation)
+- "clients contacted before 2024" + date field → SQL Analytics (for date filtering)
+"""
+
+        # Build data source context
+        data_sources = context.get("user_data_sources", [])
+        data_source_desc = ""
+        if data_sources:
+            data_source_desc = "\n\nUSER'S DATA SOURCES:\n"
+            for src in data_sources:
+                source_type = src.get("source_type", "unknown")
+                count = src.get("client_count", 0)
+                data_source_desc += f"  - {source_type}: {count} clients\n"
+            data_source_desc += """
+MULTI-SOURCE RULES:
+1. If query mentions a specific source (e.g., "Salesforce clients"), filter by source_type
+2. If query compares sources (e.g., "between CSV and Salesforce"), use cross-source logic
+3. If query doesn't specify source, include all sources but show source breakdown
+4. Always include source_type in results when relevant
+"""
+
+        # Build data discovery context (thresholds and statistics)
+        discovery = context.get("discovery_context", {})
+        thresholds_desc = ""
+        if discovery:
+            thresholds = discovery.get("computed_thresholds", {})
+            numeric_stats = discovery.get("numeric_stats", {})
+            field_completeness = discovery.get("field_completeness", {})
+
+            if thresholds or numeric_stats:
+                thresholds_desc = "\n\nDATA CONTEXT (computed from user's actual data):\n"
+
+                if thresholds.get("high_value_aum"):
+                    thresholds_desc += f"  - 'High value' clients = AUM >= ${thresholds['high_value_aum']:,.0f} (top 10% of this user's data)\n"
+                if thresholds.get("medium_value_aum"):
+                    thresholds_desc += f"  - 'Medium value' clients = AUM >= ${thresholds['medium_value_aum']:,.0f} (above median)\n"
+
+                if numeric_stats.get("aum"):
+                    aum = numeric_stats["aum"]
+                    if aum.get("min") is not None and aum.get("max") is not None:
+                        thresholds_desc += f"  - AUM range in data: ${aum['min']:,.0f} to ${aum['max']:,.0f}\n"
+
+                if field_completeness:
+                    low_fields = [f for f, pct in field_completeness.items() if pct < 50]
+                    if low_fields:
+                        thresholds_desc += f"  - Fields with low data (<50%): {', '.join(low_fields)}\n"
+
+                thresholds_desc += """
+USE THESE THRESHOLDS: When user says 'high value', 'wealthy', 'top clients' - use the computed high_value_aum threshold above.
+This ensures queries match the user's actual data distribution, not arbitrary values.
+"""
 
         context_str = ""
         if context:
-            context_str = f"\n\nAvailable Context:\n{json.dumps(context, indent=2)}"
+            # Remove internal context from display
+            display_context = {k: v for k, v in context.items() if k not in ["user_data_sources", "discovery_context"]}
+            if display_context:
+                context_str = f"\n\nAdditional Context:\n{json.dumps(display_context, indent=2)}"
+
+        # Build explicit list of valid agent names
+        valid_agents = list(self._agent_capabilities.keys())
+        valid_agents_str = ", ".join(valid_agents)
 
         prompt = f"""You are an intelligent workflow orchestrator for a multi-agent client data analysis system.
 
 Your job is to break down the user's request into a sequential execution plan using available agents.
 
-AVAILABLE AGENTS AND THEIR CAPABILITIES:
-{capabilities_desc}
+IMPORTANT: You MUST ONLY use these exact agent names: {valid_agents_str}
+Do NOT invent agent names like "data_explorer" - use only the names listed above.
 
+AVAILABLE AGENTS (discovered dynamically):
+{capabilities_desc}
+{schema_desc}{data_source_desc}{thresholds_desc}
 CRITICAL ROUTING RULES:
 1. SQL Analytics Agent:
    - USE FOR: Math, calculations, aggregations, date operations, exact value filtering
@@ -425,9 +755,10 @@ CRITICAL ROUTING RULES:
    - USE FOR: Unstructured text search, fuzzy matching, similarity, concepts
    - NEVER USE FOR: Math, calculations, exact filtering, date operations
 
-3. Each agent is independent and has its own LLM (Flash or Pro)
+3. Each agent is independent and has its own LLM
 4. Agents never call other agents - only YOU coordinate the workflow
 5. Results from each step feed into the next step
+6. The "task" field should be natural language - the agent will interpret it
 
 User Query: "{user_query}"{context_str}
 
@@ -439,9 +770,9 @@ Respond ONLY with valid JSON in this format:
   "steps": [
     {{
       "agent": "agent_name",
-      "action": "action_name",
+      "task": "Natural language description of what this agent should do",
       "parameters": {{}},
-      "reasoning": "Why this step is needed",
+      "reasoning": "Why this agent and task",
       "required": true
     }}
   ],
@@ -456,8 +787,8 @@ User: "How many clients do we have?"
   "steps": [
     {{
       "agent": "sql_analytics",
-      "action": "generate_and_execute_query",
-      "parameters": {{"query_intent": "count all clients"}},
+      "task": "Count all clients in the database",
+      "parameters": {{}},
       "reasoning": "Simple COUNT query on clients table",
       "required": true
     }}
@@ -465,61 +796,53 @@ User: "How many clients do we have?"
   "overall_strategy": "Single SQL query to count clients"
 }}
 
-Complex Request:
-User: "Upload this CSV, then show me clients with AUM over $1M who haven't been contacted in 60 days"
+Multi-Step Request:
+User: "Find high-value clients and segment them by engagement"
 {{
   "steps": [
     {{
-      "agent": "data_ingestion",
-      "action": "upload_csv",
-      "parameters": {{"validate_schema": true}},
-      "reasoning": "First need to import the CSV data",
+      "agent": "sql_analytics",
+      "task": "Find clients with AUM over $500,000",
+      "parameters": {{}},
+      "reasoning": "First identify high-value clients using quantitative filter",
       "required": true
     }},
     {{
-      "agent": "sql_analytics",
-      "action": "generate_and_execute_query",
-      "parameters": {{
-        "filters": ["aum > 1000000", "last_contact_date < NOW() - INTERVAL '60 days'"]
-      }},
-      "reasoning": "Use SQL for quantitative filtering (AUM > 1M) and date math (60 days)",
+      "agent": "segmentation",
+      "task": "Segment the high-value clients by engagement level",
+      "parameters": {{"client_ids": "from_previous_step"}},
+      "reasoning": "Group the identified clients into engagement segments",
       "required": true
     }}
   ],
-  "overall_strategy": "Import data first, then query with SQL for math and date operations"
-}}
-
-Semantic + SQL Example:
-User: "Find clients interested in retirement planning with AUM over $500k"
-{{
-  "steps": [
-    {{
-      "agent": "semantic_search",
-      "action": "search_text_fields",
-      "parameters": {{
-        "search_terms": ["retirement planning", "retirement", "pension"],
-        "fields": ["notes", "interests", "goals"]
-      }},
-      "reasoning": "Use semantic search for unstructured text matching on 'retirement planning'",
-      "required": true
-    }},
-    {{
-      "agent": "sql_analytics",
-      "action": "filter_by_quantitative",
-      "parameters": {{
-        "client_ids": "from_previous_step",
-        "filters": ["aum > 500000"]
-      }},
-      "reasoning": "Use SQL for quantitative filtering (AUM > 500k) on semantic search results",
-      "required": true
-    }}
-  ],
-  "overall_strategy": "Semantic search for concept, then SQL for quantitative filtering"
+  "overall_strategy": "Find high-value clients with SQL, then segment them"
 }}
 
 Now analyze the user query and create the execution plan:"""
 
         return prompt
+
+    def _summarize_step_result(self, result: Any) -> str:
+        """Generate a short summary of step result for transparency events"""
+        if result is None:
+            return "No result"
+        if isinstance(result, dict):
+            if "row_count" in result:
+                return f"Found {result['row_count']} records"
+            if "segments" in result:
+                return f"Created {len(result['segments'])} segments"
+            if "patterns" in result:
+                return f"Detected {len(result['patterns'])} patterns"
+            if "recommendations" in result:
+                return f"Generated {len(result['recommendations'])} recommendations"
+            if "matches" in result:
+                return f"Found {len(result['matches'])} matches"
+            # Generic summary
+            keys = list(result.keys())[:3]
+            return f"Result with {len(result)} fields: {', '.join(keys)}"
+        if isinstance(result, list):
+            return f"List with {len(result)} items"
+        return str(result)[:100]
 
     async def _call_gemini(self, prompt: str) -> str:
         """Call Gemini Pro model"""
@@ -560,11 +883,42 @@ Now analyze the user query and create the execution plan:"""
             if "steps" not in plan or not isinstance(plan["steps"], list):
                 raise ValueError("Plan must contain 'steps' array")
 
+            valid_agents = set(self.agent_registry.keys())
+
             for step in plan["steps"]:
-                required_fields = ["agent", "action", "parameters", "reasoning"]
-                for field in required_fields:
-                    if field not in step:
-                        raise ValueError(f"Step missing required field: {field}")
+                # Required: agent and either task or action
+                if "agent" not in step:
+                    raise ValueError("Step missing required field: agent")
+                if "task" not in step and "action" not in step:
+                    raise ValueError("Step must have 'task' or 'action' field")
+
+                # Validate and normalize agent name
+                raw_agent = step["agent"]
+                normalized_agent = self._normalize_agent_name(raw_agent)
+
+                if normalized_agent not in valid_agents:
+                    # Log the invalid agent for debugging
+                    self.logger.warning(
+                        "invalid_agent_in_plan",
+                        requested=raw_agent,
+                        normalized=normalized_agent,
+                        valid_agents=list(valid_agents)
+                    )
+                    raise ValueError(
+                        f"Invalid agent '{raw_agent}' in plan. "
+                        f"Valid agents: {', '.join(sorted(valid_agents))}"
+                    )
+
+                # Update step with normalized agent name
+                step["agent"] = normalized_agent
+
+                # Normalize: copy task to action if action missing (backward compat)
+                if "task" in step and "action" not in step:
+                    step["action"] = step["task"]
+
+                # Ensure parameters exists
+                if "parameters" not in step:
+                    step["parameters"] = {}
 
             return plan
 
@@ -587,23 +941,27 @@ Now analyze the user query and create the execution plan:"""
         """
         Execute a single workflow step by calling the appropriate agent
         """
-        agent_name = step["agent"]
+        raw_agent_name = step["agent"]
+        agent_name = self._normalize_agent_name(raw_agent_name)
         action = step["action"]
         parameters = step["parameters"]
 
         try:
-            # Get agent from registry
+            # Get agent from registry (using normalized name)
             agent = self.agent_registry.get(agent_name)
 
             if not agent:
+                available = list(self.agent_registry.keys())
                 self.logger.warning(
                     "agent_not_available",
-                    agent_name=agent_name
+                    requested=raw_agent_name,
+                    normalized=agent_name,
+                    available=available
                 )
                 return {
                     "success": False,
                     "result": None,
-                    "error": f"Agent '{agent_name}' not yet implemented"
+                    "error": f"Agent '{agent_name}' not found. Available: {', '.join(available)}"
                 }
 
             # Create agent message

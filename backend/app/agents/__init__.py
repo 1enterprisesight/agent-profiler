@@ -1,5 +1,5 @@
 """
-Agent Framework Package
+Agent Framework Package - Phase D: Self-Describing Agents
 """
 
 from app.agents.base import (
@@ -7,6 +7,7 @@ from app.agents.base import (
     AgentMessage,
     AgentResponse,
     AgentStatus,
+    EventType,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "AgentMessage",
     "AgentResponse",
     "AgentStatus",
+    "EventType",
 ]

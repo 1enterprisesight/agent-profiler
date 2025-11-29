@@ -116,19 +116,20 @@ export function DataSourceList({ onManageClick }: DataSourceListProps) {
             </div>
           </div>
 
-          {/* Data Source List */}
+          {/* Data Source List - show all since panel is scrollable */}
           <div className="space-y-2">
-            {activeDataSources.slice(0, 3).map((ds) => (
+            {activeDataSources.map((ds) => (
               <DataSourceCard key={ds.id} dataSource={ds} />
             ))}
           </div>
 
-          {activeDataSources.length > 3 && (
+          {/* Manage link always visible */}
+          {activeDataSources.length > 0 && (
             <button
               onClick={onManageClick}
               className="w-full mt-3 text-sm text-slate-400 hover:text-white transition-colors"
             >
-              View all {activeDataSources.length} sources →
+              Manage data sources →
             </button>
           )}
         </>

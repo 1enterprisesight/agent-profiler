@@ -1,15 +1,21 @@
 import { useState } from 'react';
+import { Wifi, WifiOff, Radio } from 'lucide-react';
 import { AgentNetwork } from './components/AgentNetwork';
 import { ChatInterface } from './components/ChatInterface';
 import { WorkflowDisplay } from './components/WorkflowDisplay';
 import { DataSourceList } from './components/DataSourceList';
 import { DataSourceManager } from './components/DataSourceManager';
 import { LoginButton } from './components/LoginButton';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { useAuth } from './contexts/AuthContext';
+import type { TransparencyEvent } from './types';
 
 function App() {
   const [activeAgents, setActiveAgents] = useState<string[]>([]);
   const [currentWorkflow, setCurrentWorkflow] = useState<any>(null);
+  const [transparencyEvents, setTransparencyEvents] = useState<TransparencyEvent[]>([]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [showDataManager, setShowDataManager] = useState(false);
   const { isAuthenticated, isLoading } = useAuth();
 
@@ -27,9 +33,24 @@ function App() {
             </div>
             <div className="flex items-center gap-4">
               {isAuthenticated && (
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                  <span className="text-sm text-slate-400">System Online</span>
+                <div className="flex items-center gap-3">
+                  {/* Streaming status indicator */}
+                  {isStreaming ? (
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-full">
+                      <Radio className="w-4 h-4 text-emerald-400 animate-pulse" />
+                      <span className="text-sm text-emerald-400 font-medium">Live</span>
+                    </div>
+                  ) : isProcessing ? (
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-500/10 border border-amber-500/30 rounded-full">
+                      <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                      <span className="text-sm text-amber-400">Processing</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800 border border-slate-700 rounded-full">
+                      <Wifi className="w-4 h-4 text-emerald-500" />
+                      <span className="text-sm text-slate-400">Ready</span>
+                    </div>
+                  )}
                 </div>
               )}
               <LoginButton />
@@ -65,26 +86,63 @@ function App() {
             </div>
           </div>
         ) : (
-          <div className="grid grid-cols-12 gap-6 h-[calc(100vh-120px)]">
-            {/* Left Panel - Data Sources & Agent Network */}
-            <div className="col-span-4 h-full flex flex-col gap-6 overflow-y-auto">
-              <DataSourceList onManageClick={() => setShowDataManager(true)} />
-              <AgentNetwork activeAgents={activeAgents} />
-            </div>
+          <ErrorBoundary>
+            <div className="grid grid-cols-12 gap-4 h-[calc(100vh-120px)]">
+              {/* LEFT COLUMN: Chat + Agent Network - 8 cols */}
+              <div className="col-span-8 flex flex-col gap-4 min-h-0">
+                {/* Chat Interface - takes 60% of left column */}
+                <div className="flex-[3] min-h-0">
+                  <ErrorBoundary>
+                    <ChatInterface
+                      onAgentsActive={setActiveAgents}
+                      onWorkflowUpdate={setCurrentWorkflow}
+                      onTransparencyEvents={setTransparencyEvents}
+                      onProcessingChange={setIsProcessing}
+                      onStreamingChange={setIsStreaming}
+                      onNewChat={() => {
+                        setTransparencyEvents([]);
+                        setCurrentWorkflow(null);
+                        setActiveAgents([]);
+                        setIsStreaming(false);
+                      }}
+                    />
+                  </ErrorBoundary>
+                </div>
 
-            {/* Center Panel - Chat Interface */}
-            <div className="col-span-5 h-full">
-              <ChatInterface
-                onAgentsActive={setActiveAgents}
-                onWorkflowUpdate={setCurrentWorkflow}
-              />
-            </div>
+                {/* Agent Network - takes 40% of left column */}
+                <div className="flex-[2] min-h-0">
+                  <ErrorBoundary>
+                    <AgentNetwork
+                      activeAgents={activeAgents}
+                      transparencyEvents={transparencyEvents}
+                      isProcessing={isProcessing}
+                      isStreaming={isStreaming}
+                    />
+                  </ErrorBoundary>
+                </div>
+              </div>
 
-            {/* Right Panel - Workflow Display */}
-            <div className="col-span-3 h-full">
-              <WorkflowDisplay workflow={currentWorkflow} />
+              {/* RIGHT COLUMN: Data Sources + Workflow - 4 cols */}
+              <div className="col-span-4 flex flex-col gap-4 min-h-0">
+                {/* Data Sources - takes 35% of right column */}
+                <div className="flex-[1] min-h-0 overflow-y-auto">
+                  <ErrorBoundary>
+                    <DataSourceList onManageClick={() => setShowDataManager(true)} />
+                  </ErrorBoundary>
+                </div>
+
+                {/* Workflow Details - takes 65% of right column */}
+                <div className="flex-[2] min-h-0 overflow-y-auto">
+                  <ErrorBoundary>
+                    <WorkflowDisplay
+                      workflow={currentWorkflow}
+                      transparencyEvents={transparencyEvents}
+                    />
+                  </ErrorBoundary>
+                </div>
+              </div>
             </div>
-          </div>
+          </ErrorBoundary>
         )}
       </main>
 

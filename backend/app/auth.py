@@ -230,3 +230,58 @@ def is_allowed_email(email: str) -> bool:
     """
     domain = email.split('@')[-1] if '@' in email else ''
     return domain == settings.allowed_domain
+
+
+async def get_user_from_token(token: str) -> User:
+    """
+    Get user from token string (for query param auth).
+    Used for SSE endpoints where headers aren't supported.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        User object
+
+    Raises:
+        HTTPException: If token is invalid
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+    )
+
+    if not token:
+        raise credentials_exception
+
+    try:
+        payload = jwt.decode(
+            token,
+            settings.jwt_secret_key,
+            algorithms=[settings.jwt_algorithm]
+        )
+        email: str = payload.get("email")
+        user_id: str = payload.get("sub")
+
+        if email is None or user_id is None:
+            raise credentials_exception
+
+        # Verify domain
+        domain = email.split('@')[-1] if '@' in email else ''
+        if domain != settings.allowed_domain:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Only {settings.allowed_domain} users are allowed"
+            )
+
+        return User(
+            email=email,
+            user_id=user_id,
+            name=payload.get("name"),
+            picture=payload.get("picture"),
+            is_admin=False
+        )
+
+    except JWTError as e:
+        logger.error(f"JWT decode error: {e}")
+        raise credentials_exception

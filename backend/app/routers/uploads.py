@@ -93,6 +93,7 @@ async def upload_csv(
             )
 
             # Process with Data Ingestion Agent
+            # Skip transparency events for direct uploads (no chat session)
             agent_message = AgentMessage(
                 agent_type="data_ingestion",
                 action="upload_csv",
@@ -101,6 +102,7 @@ async def upload_csv(
                     "file_name": file.filename,
                     "dataset_name": dataset_name or file.filename,
                     "gcs_path": gcs_path,
+                    "skip_transparency_events": True,  # No chat session for direct uploads
                 },
                 conversation_id=conversation_id,
             )

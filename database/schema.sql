@@ -164,6 +164,45 @@ CREATE TABLE sql_query_log (
 CREATE INDEX idx_sql_query_session ON sql_query_log(session_id);
 CREATE INDEX idx_sql_query_time ON sql_query_log(created_at DESC);
 
+-- Transparency events (real-time agent thinking/decision/action visibility)
+-- Phase D: Agent Architecture Rewrite - complete transparency system
+CREATE TABLE transparency_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    session_id UUID NOT NULL,              -- Links to conversation_sessions
+    user_id VARCHAR(255) NOT NULL,         -- User isolation (CRITICAL)
+    agent_name VARCHAR(100) NOT NULL,      -- Which agent emitted this event
+
+    -- Event classification
+    event_type VARCHAR(50) NOT NULL,       -- received, thinking, decision, action, result, error
+
+    -- Summary (always shown in UI)
+    title VARCHAR(500) NOT NULL,           -- Short description for collapsed view
+
+    -- Verbose details (shown on expand)
+    details JSONB,                         -- Full context, reasoning, data
+
+    -- Hierarchy for nested events
+    parent_event_id UUID REFERENCES transparency_events(id),
+    step_number INTEGER,                   -- Order within workflow
+
+    -- Timing
+    created_at TIMESTAMP DEFAULT NOW(),
+    duration_ms INTEGER,                   -- For action/result events
+
+    -- Foreign key to conversation
+    FOREIGN KEY (session_id) REFERENCES conversation_sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_transparency_session ON transparency_events(session_id);
+CREATE INDEX idx_transparency_user ON transparency_events(user_id);
+CREATE INDEX idx_transparency_created ON transparency_events(created_at DESC);
+CREATE INDEX idx_transparency_agent ON transparency_events(agent_name);
+
+COMMENT ON TABLE transparency_events IS 'Complete transparency log of agent thinking, decisions, and actions for user visibility';
+COMMENT ON COLUMN transparency_events.event_type IS 'received=task received, thinking=LLM interpreting, decision=capability chosen, action=executing, result=complete, error=failed';
+COMMENT ON COLUMN transparency_events.title IS 'Short human-readable summary shown in collapsed UI view';
+COMMENT ON COLUMN transparency_events.details IS 'Full verbose data shown when user expands the event';
+
 -- Data transformation log (field mappings, data cleaning, etc.)
 CREATE TABLE data_transformation_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

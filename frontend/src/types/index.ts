@@ -49,8 +49,44 @@ export interface ChatResponse {
       total_steps: number;
       successful_steps: number;
     };
+    transparency_events?: TransparencyEvent[];
   };
   agent_used: string;
   status: string;
   timestamp: string;
+}
+
+// Phase D: Transparency Event Types
+export type EventType = 'received' | 'thinking' | 'decision' | 'action' | 'result' | 'error';
+
+export interface TransparencyEvent {
+  id: string;
+  session_id: string;
+  agent_name: string;
+  event_type: EventType;
+  title: string;
+  details: Record<string, any>;
+  parent_event_id?: string;
+  step_number?: number;
+  created_at: string;
+  duration_ms?: number;
+}
+
+// Agent visual states for animations
+export type AgentVisualState = 'idle' | 'receiving' | 'thinking' | 'acting' | 'complete' | 'error';
+
+export interface AgentState extends Agent {
+  visualState: AgentVisualState;
+  currentEvent?: TransparencyEvent;
+}
+
+// Data source types for D12
+export type DataSourceType = 'csv' | 'salesforce' | 'wealthbox' | 'hubspot' | 'custom';
+
+export interface DataSourceInfo {
+  type: DataSourceType;
+  name: string;
+  clientCount: number;
+  icon: string;
+  color: string;
 }

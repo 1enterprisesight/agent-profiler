@@ -34,6 +34,9 @@ AsyncSessionLocal = async_sessionmaker(
     autoflush=False,
 )
 
+# Alias for clearer imports
+async_session_factory = AsyncSessionLocal
+
 
 async def init_db():
     """Initialize database - create all tables"""

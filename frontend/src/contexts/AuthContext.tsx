@@ -38,6 +38,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsLoading(false);
   }, []);
 
+  // Listen for forced logout events from API interceptor
+  useEffect(() => {
+    const handleForcedLogout = () => {
+      console.log('Session expired, logging out');
+      googleLogout();
+      setUser(null);
+      setToken(null);
+      delete api.defaults.headers.common['Authorization'];
+    };
+
+    window.addEventListener('auth:logout', handleForcedLogout);
+    return () => {
+      window.removeEventListener('auth:logout', handleForcedLogout);
+    };
+  }, []);
+
   const login = async (credential: string) => {
     try {
       // Exchange Google credential for our JWT

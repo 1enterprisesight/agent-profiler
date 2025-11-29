@@ -1,23 +1,36 @@
 """
-Base Agent Framework
-Provides abstract base class for all agents with built-in transparency logging
+Base Agent Framework - Phase D: Self-Describing Agents
+Provides abstract base class for all agents with:
+- Self-description (get_agent_info, get_capabilities)
+- Complete transparency logging (emit_event)
+- LLM-driven task interpretation (no hardcoded action routing)
 """
 
 import uuid
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime
 from enum import Enum
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AgentActivityLog, AgentLLMConversation
+from app.models import AgentActivityLog, AgentLLMConversation, TransparencyEvent
 from app.config import settings
 
 
 logger = structlog.get_logger()
+
+
+class EventType(str, Enum):
+    """Transparency event types for agent visibility"""
+    RECEIVED = "received"    # Agent received task from orchestrator
+    THINKING = "thinking"    # LLM is interpreting/analyzing
+    DECISION = "decision"    # Agent chose capability/approach
+    ACTION = "action"        # Executing operation
+    RESULT = "result"        # Operation completed
+    ERROR = "error"          # Something failed
 
 
 class AgentStatus(str, Enum):
@@ -100,14 +113,146 @@ class AgentResponse:
 
 class BaseAgent(ABC):
     """
-    Abstract base class for all agents
-    Provides common functionality for agent execution and logging
+    Abstract base class for all agents - Phase D: Self-Describing
+
+    All agents must implement:
+    - get_agent_info(): Class method returning agent metadata for orchestrator discovery
+    - get_capabilities(): Instance method returning internal routing capabilities
+    - _execute_internal(): The actual execution logic
+
+    Provides:
+    - emit_event(): Transparency event emission to database
+    - log_llm_conversation(): LLM conversation logging
+    - call_agent(): Inter-agent communication
     """
 
-    def __init__(self, name: str, description: str):
-        self.name = name
-        self.description = description
-        self.logger = structlog.get_logger().bind(agent=name)
+    def __init__(self, name: str = None, description: str = None):
+        # Allow getting name from get_agent_info() if not provided
+        info = self.get_agent_info()
+        self.name = name or info.get("name", self.__class__.__name__.lower())
+        self.description = description or info.get("purpose", "")
+        self.logger = structlog.get_logger().bind(agent=self.name)
+
+    @classmethod
+    @abstractmethod
+    def get_agent_info(cls) -> Dict[str, Any]:
+        """
+        Agent describes itself for dynamic discovery by orchestrator.
+
+        Returns:
+            {
+                "name": "segmentation",
+                "purpose": "Group clients into meaningful cohorts",
+                "when_to_use": [
+                    "User wants to group or cluster clients",
+                    "User asks about segments, cohorts, or personas",
+                ],
+                "when_not_to_use": [
+                    "User needs numerical calculations",
+                    "User is searching for specific text",
+                ],
+                "example_tasks": [
+                    "Segment my clients by engagement level",
+                    "Find clients similar to my top performers",
+                ],
+                "data_source_aware": True,  # Optional: can handle multi-source queries
+            }
+        """
+        pass
+
+    @abstractmethod
+    def get_capabilities(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Agent's internal capabilities for LLM-driven task routing.
+
+        Returns:
+            {
+                "cluster_clients": {
+                    "description": "Group clients into segments based on attributes",
+                    "examples": ["segment by", "group clients", "create clusters"],
+                    "method": "_cluster_clients"  # Method name to call
+                },
+                "find_similar": {
+                    "description": "Find clients similar to a reference",
+                    "examples": ["find similar", "clients like", "lookalikes"],
+                    "method": "_find_similar_clients"
+                },
+            }
+        """
+        pass
+
+    async def emit_event(
+        self,
+        db: AsyncSession,
+        session_id: str,
+        user_id: str,
+        event_type: EventType,
+        title: str,
+        details: Optional[Dict[str, Any]] = None,
+        parent_event_id: Optional[uuid.UUID] = None,
+        step_number: Optional[int] = None,
+        duration_ms: Optional[int] = None,
+    ) -> TransparencyEvent:
+        """
+        Emit a transparency event - stored in DB for user visibility.
+
+        Args:
+            db: Database session
+            session_id: Conversation session ID
+            user_id: User ID (REQUIRED for isolation)
+            event_type: Type of event (received, thinking, decision, action, result, error)
+            title: Short summary shown in collapsed UI view
+            details: Verbose data shown when user expands the event
+            parent_event_id: Optional parent event for hierarchy
+            step_number: Order within workflow
+            duration_ms: Duration for action/result events
+
+        Returns:
+            The created TransparencyEvent
+        """
+        if not user_id:
+            raise ValueError("user_id is required for all transparency events")
+
+        try:
+            # Convert string session_id to UUID if needed
+            if isinstance(session_id, str):
+                session_uuid = uuid.UUID(session_id)
+            else:
+                session_uuid = session_id
+
+            event = TransparencyEvent(
+                session_id=session_uuid,
+                user_id=user_id,
+                agent_name=self.name,
+                event_type=event_type.value if isinstance(event_type, EventType) else event_type,
+                title=title,
+                details=details or {},
+                parent_event_id=parent_event_id,
+                step_number=step_number,
+                duration_ms=duration_ms,
+            )
+            db.add(event)
+            await db.flush()
+
+            self.logger.info(
+                "transparency_event_emitted",
+                event_type=event_type.value if isinstance(event_type, EventType) else event_type,
+                title=title,
+                session_id=str(session_uuid),
+                user_id=user_id,
+            )
+
+            return event
+
+        except Exception as e:
+            self.logger.error(
+                "failed_to_emit_transparency_event",
+                error=str(e),
+                event_type=event_type,
+                title=title,
+                exc_info=True,
+            )
+            raise
 
     async def execute(
         self,
@@ -139,11 +284,13 @@ class BaseAgent(ABC):
             )
 
             # Create activity log entry
+            # Truncate activity_type to 100 chars (DB column limit)
+            activity_type = (message.action[:97] + "...") if len(message.action) > 100 else message.action
             activity_log = AgentActivityLog(
                 session_id=message.conversation_id,  # Use conversation_id as session_id
                 user_id=user_id,
                 agent_name=self.name,
-                activity_type=message.action,  # Changed from 'action' to 'activity_type'
+                activity_type=activity_type,
                 input_data=message.payload,
                 status=AgentStatus.RUNNING.value,
             )

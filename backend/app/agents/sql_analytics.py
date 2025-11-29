@@ -1,99 +1,90 @@
 """
-SQL Analytics Agent
-Generates and executes SQL queries for quantitative analysis using Gemini Pro
+SQL Analytics Agent - Phase D: Self-Describing
+Generates and executes SQL queries for quantitative analysis using Gemini Pro.
+Follows the segmentation.py template pattern.
 """
 
 from typing import Dict, Any, Optional, List
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 import json
-from datetime import datetime
 
 import vertexai
 from vertexai.preview.generative_models import GenerativeModel
 
-from app.agents.base import BaseAgent, AgentMessage, AgentResponse, AgentStatus
+from app.agents.base import BaseAgent, AgentMessage, AgentResponse, AgentStatus, EventType
+from app.agents.schema_utils import get_schema_context, build_sql_schema_description
 from app.config import settings
-
-
-# Database schema information for SQL generation
-DATABASE_SCHEMA = {
-    "clients": {
-        "description": "Client records from all data sources",
-        "columns": {
-            "id": "UUID - Primary key",
-            "user_id": "VARCHAR - Owner user ID (REQUIRED for filtering)",
-            "source_type": "VARCHAR - Data source type (csv, salesforce, wealthbox, etc.)",
-            "source_id": "VARCHAR - Original ID in source system",
-            "connection_id": "UUID - Reference to CRM connection",
-            "client_name": "VARCHAR - Client full name",
-            "contact_email": "VARCHAR - Primary email address",
-            "company_name": "VARCHAR - Company/firm name",
-            "core_data": "JSONB - Structured core fields (phone, address, aum, etc.)",
-            "custom_data": "JSONB - Custom fields from source",
-            "computed_metrics": "JSONB - Calculated scores and metrics",
-            "synced_at": "TIMESTAMP - Last sync time",
-            "created_at": "TIMESTAMP - Record creation time",
-            "updated_at": "TIMESTAMP - Last update time"
-        },
-        "jsonb_fields": {
-            "core_data": ["aum", "risk_score", "last_contact_date", "phone", "address", "age", "account_value"],
-            "custom_data": ["varies by source"],
-            "computed_metrics": ["engagement_score", "churn_risk", "lifetime_value"]
-        },
-        "indexes": ["user_id", "source_type", "source_id", "contact_email", "core_data", "custom_data"]
-    },
-    "uploaded_files": {
-        "description": "Uploaded files and data sources",
-        "columns": {
-            "id": "UUID - Primary key",
-            "user_id": "VARCHAR - Owner user ID (REQUIRED for filtering)",
-            "file_name": "VARCHAR - Original filename",
-            "file_type": "VARCHAR - File MIME type",
-            "gcs_path": "VARCHAR - Cloud Storage path",
-            "file_size_bytes": "BIGINT - File size",
-            "status": "VARCHAR - Processing status",
-            "metadata": "JSONB - File metadata and schema info",
-            "processing_results": "JSONB - Import results",
-            "records_imported": "INTEGER - Number of records imported",
-            "uploaded_at": "TIMESTAMP - Upload time",
-            "processed_at": "TIMESTAMP - Processing completion time"
-        }
-    }
-}
 
 
 class SQLAnalyticsAgent(BaseAgent):
     """
-    SQL Analytics Agent - Quantitative analysis using SQL
+    SQL Analytics Agent - Phase D: Self-Describing
 
-    Capabilities:
-    - Math operations (SUM, AVG, COUNT, MIN, MAX)
-    - Date/time calculations
-    - Exact value filtering (WHERE col = value)
-    - Aggregations with GROUP BY
-    - Statistical calculations
-
-    Never Uses:
-    - LIKE or regex patterns (use Semantic Search Agent)
-    - Fuzzy text matching
-    - Natural language search in text fields
+    Quantitative analysis using SQL with complete transparency.
+    Uses LLM to interpret tasks - NO hardcoded action routing.
     """
 
-    def __init__(self):
-        super().__init__(
-            name="sql_analytics",
-            description="Quantitative analysis and SQL query generation"
-        )
+    @classmethod
+    def get_agent_info(cls) -> Dict[str, Any]:
+        """Agent describes itself for dynamic discovery by orchestrator."""
+        return {
+            "name": "sql_analytics",
+            "purpose": "Quantitative analysis and SQL query generation for numerical data",
+            "when_to_use": [
+                "User needs mathematical calculations (sum, average, count)",
+                "User wants to filter by exact values or ranges",
+                "User needs date/time calculations",
+                "User wants aggregations with GROUP BY",
+                "User needs to count, sort, or rank records",
+                "User asks 'how many', 'total', 'average', 'top N'"
+            ],
+            "when_not_to_use": [
+                "User is searching for text in notes or descriptions",
+                "User wants fuzzy or semantic matching",
+                "User needs pattern recognition or anomaly detection",
+                "User is looking for similar items (use semantic search)"
+            ],
+            "example_tasks": [
+                "How many clients do I have?",
+                "What is the average AUM per client?",
+                "Find clients with AUM over $1M",
+                "Show clients not contacted in 60 days",
+                "Count clients by data source"
+            ],
+            "data_source_aware": True
+        }
 
-        # Initialize Vertex AI
+    def get_capabilities(self) -> Dict[str, Dict[str, Any]]:
+        """Agent's internal capabilities for LLM-driven task routing."""
+        return {
+            "generate_and_execute": {
+                "description": "Generate SQL from natural language and execute it",
+                "examples": ["query", "find", "count", "calculate", "show", "list"],
+                "method": "_generate_and_execute_query"
+            },
+            "aggregate_data": {
+                "description": "Perform aggregations like SUM, AVG, COUNT with GROUP BY",
+                "examples": ["total", "average", "sum", "group by", "breakdown"],
+                "method": "_aggregate_data"
+            },
+            "filter_quantitative": {
+                "description": "Filter data by numerical criteria or date ranges",
+                "examples": ["greater than", "less than", "between", "before", "after"],
+                "method": "_filter_by_quantitative"
+            }
+        }
+
+    def __init__(self):
+        super().__init__()
+
         vertexai.init(
             project=settings.google_cloud_project,
             location=settings.vertex_ai_location
         )
 
-        # Use Pro model for complex SQL generation
         self.model = GenerativeModel(settings.gemini_pro_model)
 
     async def _execute_internal(
@@ -102,142 +93,170 @@ class SQLAnalyticsAgent(BaseAgent):
         db: AsyncSession,
         user_id: str,
     ) -> AgentResponse:
-        """
-        Execute SQL analytics action
-
-        Actions:
-            - generate_and_execute_query: Generate SQL and execute it
-            - filter_by_quantitative: Filter results by quantitative criteria
-            - aggregate_data: Perform aggregations
-            - calculate_metrics: Calculate statistical metrics
-        """
-        action = message.action
+        """Execute SQL analytics task using LLM-driven interpretation."""
+        task = message.action
         payload = message.payload
+        conversation_id = message.conversation_id
+        start_time = datetime.utcnow()
 
-        if action == "generate_and_execute_query":
-            return await self._generate_and_execute_query(
-                message.conversation_id,
-                user_id,
-                payload,
-                db
-            )
-        elif action == "filter_by_quantitative":
-            return await self._filter_by_quantitative(
-                message.conversation_id,
-                user_id,
-                payload,
-                db
-            )
-        elif action == "aggregate_data":
-            return await self._aggregate_data(
-                message.conversation_id,
-                user_id,
-                payload,
-                db
-            )
-        elif action == "calculate_metrics":
-            return await self._calculate_metrics(
-                message.conversation_id,
-                user_id,
-                payload,
-                db
-            )
-        else:
-            return AgentResponse(
-                status=AgentStatus.FAILED,
-                error=f"Unknown action: {action}"
-            )
-
-    async def _generate_and_execute_query(
-        self,
-        conversation_id: str,
-        user_id: str,
-        payload: Dict[str, Any],
-        db: AsyncSession,
-    ) -> AgentResponse:
-        """
-        Generate SQL query from natural language and execute it
-        """
         try:
-            query_intent = payload.get("query_intent", "")
-            filters = payload.get("filters", [])
-            client_ids = payload.get("client_ids")  # Optional pre-filtered list
-            context = payload.get("context", {})
-
-            self.logger.info(
-                "generating_sql_query",
-                query_intent=query_intent,
-                has_filters=len(filters) > 0,
-                has_client_ids=client_ids is not None
+            # TRANSPARENCY: Received event
+            await self.emit_event(
+                db=db,
+                session_id=conversation_id,
+                user_id=user_id,
+                event_type=EventType.RECEIVED,
+                title=f"Received: {task[:50]}..." if len(task) > 50 else f"Received: {task}",
+                details={"task": task, "payload": payload},
+                step_number=1
             )
 
-            # Generate SQL using Gemini Pro
+            # TRANSPARENCY: Thinking event
+            await self.emit_event(
+                db=db,
+                session_id=conversation_id,
+                user_id=user_id,
+                event_type=EventType.THINKING,
+                title="Analyzing query requirements...",
+                details={"task": task, "available_capabilities": list(self.get_capabilities().keys())},
+                step_number=2
+            )
+
+            # Build query intent from task
+            query_intent = task
+            if payload.get("query_intent"):
+                query_intent = payload.get("query_intent")
+
+            # TRANSPARENCY: Decision event
+            await self.emit_event(
+                db=db,
+                session_id=conversation_id,
+                user_id=user_id,
+                event_type=EventType.DECISION,
+                title="Generating SQL query...",
+                details={"query_intent": query_intent},
+                step_number=3
+            )
+
+            # Generate SQL
             sql_query = await self._generate_sql(
                 query_intent,
-                filters,
-                client_ids,
-                context,
+                payload.get("filters", []),
+                payload.get("client_ids"),
+                payload.get("context", {}),
                 conversation_id,
                 user_id,
                 db
             )
 
             if not sql_query:
+                await self.emit_event(
+                    db=db,
+                    session_id=conversation_id,
+                    user_id=user_id,
+                    event_type=EventType.ERROR,
+                    title="Failed to generate SQL query",
+                    details={"query_intent": query_intent},
+                    step_number=4
+                )
                 return AgentResponse(
                     status=AgentStatus.FAILED,
                     error="Failed to generate SQL query"
                 )
 
-            # Validate query for safety
-            validation_result = self._validate_sql_query(sql_query)
-            if not validation_result["safe"]:
+            # Validate query
+            validation = self._validate_sql_query(sql_query)
+            if not validation["safe"]:
+                await self.emit_event(
+                    db=db,
+                    session_id=conversation_id,
+                    user_id=user_id,
+                    event_type=EventType.ERROR,
+                    title=f"Unsafe query: {validation['reason']}",
+                    details={"query": sql_query, "reason": validation["reason"]},
+                    step_number=4
+                )
                 return AgentResponse(
                     status=AgentStatus.FAILED,
-                    error=f"Unsafe query: {validation_result['reason']}"
+                    error=f"Unsafe query: {validation['reason']}"
                 )
 
-            # Execute query
-            results = await self._execute_query(
-                sql_query,
-                conversation_id,
-                user_id,
-                db
+            # TRANSPARENCY: Action event
+            await self.emit_event(
+                db=db,
+                session_id=conversation_id,
+                user_id=user_id,
+                event_type=EventType.ACTION,
+                title="Executing SQL query...",
+                details={"query_preview": sql_query[:200] + "..." if len(sql_query) > 200 else sql_query},
+                step_number=4
             )
 
-            # Format results
-            formatted_results = self._format_query_results(results, query_intent)
+            # Execute query
+            results = await self._execute_query(sql_query, conversation_id, user_id, db)
+            formatted = self._format_query_results(results, query_intent)
 
             # Generate insights
             insights = await self._generate_insights(
-                query_intent,
-                formatted_results,
-                conversation_id,
-                user_id,
-                db
+                query_intent, formatted, conversation_id, user_id, db
+            )
+
+            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+            # TRANSPARENCY: Result event
+            await self.emit_event(
+                db=db,
+                session_id=conversation_id,
+                user_id=user_id,
+                event_type=EventType.RESULT,
+                title=f"Query returned {formatted['row_count']} results",
+                details={
+                    "row_count": formatted["row_count"],
+                    "summary": formatted["summary"],
+                    "has_insights": bool(insights.get("patterns"))
+                },
+                step_number=5,
+                duration_ms=duration_ms
             )
 
             return AgentResponse(
                 status=AgentStatus.COMPLETED,
                 result={
                     "query": sql_query,
-                    "results": formatted_results["data"],
-                    "summary": formatted_results["summary"],
+                    "results": formatted["data"],
+                    "summary": formatted["summary"],
                     "insights": insights,
-                    "row_count": formatted_results["row_count"]
+                    "row_count": formatted["row_count"]
                 },
                 metadata={
                     "model_used": settings.gemini_pro_model,
-                    "query_type": "quantitative_analysis"
+                    "duration_ms": duration_ms
                 }
             )
 
         except Exception as e:
-            self.logger.error(
-                "sql_query_generation_failed",
-                error=str(e),
-                query_intent=payload.get("query_intent"),
-                exc_info=True
-            )
+            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+            # Rollback any failed transaction before trying to emit error event
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+
+            try:
+                await self.emit_event(
+                    db=db,
+                    session_id=conversation_id,
+                    user_id=user_id,
+                    event_type=EventType.ERROR,
+                    title=f"SQL analytics failed: {str(e)[:50]}",
+                    details={"error": str(e), "task": task},
+                    step_number=5,
+                    duration_ms=duration_ms
+                )
+            except Exception as emit_error:
+                self.logger.warning("failed_to_emit_error_event", error=str(emit_error))
+
+            self.logger.error("sql_analytics_failed", error=str(e), exc_info=True)
             return AgentResponse(
                 status=AgentStatus.FAILED,
                 error=f"SQL analytics failed: {str(e)}"
@@ -253,18 +272,12 @@ class SQLAnalyticsAgent(BaseAgent):
         user_id: str,
         db: AsyncSession,
     ) -> str:
-        """
-        Generate SQL query using Gemini Pro
-        """
-        # Build schema description
-        schema_desc = self._build_schema_description()
+        """Generate SQL query using Gemini Pro with dynamic schema."""
+        # Get dynamic schema context for this user
+        schema_context = await get_schema_context(db, user_id)
+        schema_desc = build_sql_schema_description(schema_context)
 
-        # Build context string
-        context_str = ""
-        if context:
-            context_str = f"\n\nAdditional Context:\n{json.dumps(context, indent=2)}"
-
-        # Build client_ids filter if provided
+        context_str = f"\n\nAdditional Context:\n{json.dumps(context, indent=2)}" if context else ""
         client_ids_clause = ""
         if client_ids:
             ids_str = "', '".join(client_ids)
@@ -272,104 +285,28 @@ class SQLAnalyticsAgent(BaseAgent):
 
         prompt = f"""You are a SQL query generator for a PostgreSQL database.
 
-DATABASE SCHEMA:
 {schema_desc}
 
 CRITICAL RULES:
-1. SECURITY - MANDATORY: Every query MUST include "WHERE user_id = :user_id" to filter data by the current user.
-   - This is NON-NEGOTIABLE for data isolation
-   - Use ":user_id" as a parameter placeholder (will be substituted)
-
-2. ONLY use quantitative operations:
-   - Math: SUM, AVG, COUNT, MIN, MAX, calculations
-   - Dates: DATE comparisons, INTERVAL calculations, AGE functions
-   - Exact filtering: WHERE column = value, WHERE column > value, WHERE column IN (...)
-
-3. NEVER use these (they belong to Semantic Search Agent):
-   - LIKE or ILIKE patterns
-   - Regex (~ or ~*)
-   - Full-text search
-   - Fuzzy matching
-
-4. JSONB field access:
-   - Use ->> for text: core_data->>'aum'
-   - Use -> for JSON: core_data->'address'
-   - Cast when needed: (core_data->>'aum')::numeric
-
-5. Always include:
-   - WHERE user_id = :user_id (MANDATORY)
-   - Proper JOIN conditions
-   - Appropriate WHERE clauses
-   - LIMIT to prevent huge result sets (default 100)
-   - ORDER BY for consistent results
-
-6. Return only the SELECT statement, no markdown or explanation
+1. SECURITY - MANDATORY: Every query MUST include "WHERE user_id = :user_id"
+2. USE EXACT FIELD PATHS from schema - e.g., custom_data->>'companies', core_data->>'aum'
+3. ONLY use quantitative operations: SUM, AVG, COUNT, MIN, MAX, date math, GROUP BY
+4. NEVER use LIKE, ILIKE, regex, or full-text search - those belong to Semantic Search
+5. For numeric operations: cast to numeric, e.g., (core_data->>'aum')::numeric
+6. Always include LIMIT (default 100) for SELECT queries, unless doing COUNT/SUM/AVG aggregation
+7. For custom fields not in core columns, use: custom_data->>'field_name' or core_data->>'field_name'
 
 Query Intent: "{query_intent}"
+Filters: {json.dumps(filters) if filters else "None"}{client_ids_clause}{context_str}
 
-Filters to apply: {json.dumps(filters) if filters else "None"}{client_ids_clause}{context_str}
-
-EXAMPLES:
-
-Intent: "Count all clients"
-SELECT COUNT(*) as total_clients FROM clients WHERE user_id = :user_id;
-
-Intent: "Calculate average AUM per client"
-SELECT
-    AVG((core_data->>'aum')::numeric) as avg_aum,
-    COUNT(*) as total_clients,
-    SUM((core_data->>'aum')::numeric) as total_aum
-FROM clients
-WHERE user_id = :user_id
-  AND core_data->>'aum' IS NOT NULL;
-
-Intent: "Find clients with AUM over $1M"
-SELECT
-    id, client_name, contact_email,
-    (core_data->>'aum')::numeric as aum,
-    core_data->>'last_contact_date' as last_contact
-FROM clients
-WHERE user_id = :user_id
-  AND (core_data->>'aum')::numeric > 1000000
-ORDER BY (core_data->>'aum')::numeric DESC
-LIMIT 100;
-
-Intent: "Clients not contacted in 60 days"
-SELECT
-    id, client_name, contact_email,
-    core_data->>'last_contact_date' as last_contact,
-    AGE(NOW(), (core_data->>'last_contact_date')::timestamp) as days_since_contact
-FROM clients
-WHERE user_id = :user_id
-  AND (core_data->>'last_contact_date')::timestamp < NOW() - INTERVAL '60 days'
-ORDER BY (core_data->>'last_contact_date')::timestamp ASC
-LIMIT 100;
-
-Intent: "Average AUM by risk score"
-SELECT
-    core_data->>'risk_score' as risk_score,
-    COUNT(*) as client_count,
-    AVG((core_data->>'aum')::numeric) as avg_aum,
-    SUM((core_data->>'aum')::numeric) as total_aum
-FROM clients
-WHERE user_id = :user_id
-  AND core_data->>'risk_score' IS NOT NULL
-  AND core_data->>'aum' IS NOT NULL
-GROUP BY core_data->>'risk_score'
-ORDER BY (core_data->>'risk_score')::numeric DESC;
-
-Now generate the SQL query for the intent above:"""
+Return ONLY the SELECT statement, no markdown:"""
 
         try:
             response = await self.model.generate_content_async(
                 prompt,
-                generation_config={
-                    "temperature": 0.1,  # Low temperature for precise SQL
-                    "max_output_tokens": 1024,
-                }
+                generation_config={"temperature": 0.1, "max_output_tokens": 1024}
             )
 
-            # Log LLM conversation
             await self.log_llm_conversation(
                 db=db,
                 conversation_id=conversation_id,
@@ -379,97 +316,43 @@ Now generate the SQL query for the intent above:"""
                 response=response.text,
             )
 
-            # Clean response
-            sql_query = response.text.strip()
+            sql = response.text.strip()
+            if sql.startswith("```sql"):
+                sql = sql[6:]
+            elif sql.startswith("```"):
+                sql = sql[3:]
+            if sql.endswith("```"):
+                sql = sql[:-3]
 
-            # Remove markdown code blocks if present
-            if sql_query.startswith("```sql"):
-                sql_query = sql_query[6:]
-            elif sql_query.startswith("```"):
-                sql_query = sql_query[3:]
-            if sql_query.endswith("```"):
-                sql_query = sql_query[:-3]
-
-            sql_query = sql_query.strip()
-
-            self.logger.info(
-                "sql_query_generated",
-                query_length=len(sql_query),
-                has_select=sql_query.upper().startswith("SELECT")
-            )
-
-            return sql_query
+            return sql.strip()
 
         except Exception as e:
-            self.logger.error(
-                "sql_generation_failed",
-                error=str(e),
-                exc_info=True
-            )
+            self.logger.error("sql_generation_failed", error=str(e), exc_info=True)
             return ""
 
-    def _build_schema_description(self) -> str:
-        """Build human-readable schema description"""
-        desc = ""
-        for table_name, table_info in DATABASE_SCHEMA.items():
-            desc += f"\nTable: {table_name}\n"
-            desc += f"Description: {table_info['description']}\n"
-            desc += "Columns:\n"
-            for col, col_desc in table_info["columns"].items():
-                desc += f"  - {col}: {col_desc}\n"
-            if "jsonb_fields" in table_info:
-                desc += "Common JSONB fields:\n"
-                for jsonb_col, fields in table_info["jsonb_fields"].items():
-                    desc += f"  - {jsonb_col}: {', '.join(fields)}\n"
-        return desc
-
     def _validate_sql_query(self, query: str) -> Dict[str, Any]:
-        """
-        Validate SQL query for safety
-        """
+        """Validate SQL query for safety."""
         query_upper = query.upper()
 
-        # Disallowed operations
-        dangerous_operations = [
-            ("DROP", "DROP operations not allowed"),
-            ("TRUNCATE", "TRUNCATE operations not allowed"),
-            ("DELETE", "DELETE operations not allowed"),
-            ("UPDATE", "UPDATE operations not allowed"),
-            ("INSERT", "INSERT operations not allowed"),
-            ("ALTER", "ALTER operations not allowed"),
-            ("CREATE", "CREATE operations not allowed"),
-            ("GRANT", "GRANT operations not allowed"),
-            ("REVOKE", "REVOKE operations not allowed"),
+        dangerous = [
+            ("DROP", "DROP not allowed"), ("TRUNCATE", "TRUNCATE not allowed"),
+            ("DELETE", "DELETE not allowed"), ("UPDATE", "UPDATE not allowed"),
+            ("INSERT", "INSERT not allowed"), ("ALTER", "ALTER not allowed"),
+            ("CREATE", "CREATE not allowed"), ("GRANT", "GRANT not allowed"),
         ]
 
-        for operation, reason in dangerous_operations:
-            if operation in query_upper:
+        for op, reason in dangerous:
+            if op in query_upper:
                 return {"safe": False, "reason": reason}
 
-        # Must be a SELECT query
         if not query_upper.strip().startswith("SELECT"):
             return {"safe": False, "reason": "Only SELECT queries allowed"}
 
-        # Check for LIKE (should use Semantic Search instead)
         if " LIKE " in query_upper or " ILIKE " in query_upper:
-            return {
-                "safe": False,
-                "reason": "LIKE queries not allowed - use Semantic Search Agent for text matching"
-            }
+            return {"safe": False, "reason": "LIKE queries not allowed - use Semantic Search"}
 
-        # Check for regex
-        if "~" in query:
-            return {
-                "safe": False,
-                "reason": "Regex patterns not allowed - use Semantic Search Agent"
-            }
-
-        # CRITICAL: Verify user_id filter is present
         if ":user_id" not in query.lower() and "user_id" not in query.lower():
-            return {
-                "safe": False,
-                "reason": "Query must include user_id filter for data isolation"
-            }
+            return {"safe": False, "reason": "Query must include user_id filter"}
 
         return {"safe": True, "reason": "Query passed validation"}
 
@@ -480,21 +363,15 @@ Now generate the SQL query for the intent above:"""
         user_id: str,
         db: AsyncSession,
     ) -> List[Dict[str, Any]]:
-        """
-        Execute SQL query and return results
-        """
+        """Execute SQL query and return results."""
         from app.models import SQLQueryLog
 
         start_time = datetime.utcnow()
 
         try:
-            # Execute query with user_id parameter for data isolation
             result = await db.execute(text(query), {"user_id": user_id})
-
-            # Fetch all results
             rows = result.fetchall()
 
-            # Convert to list of dicts
             if rows:
                 columns = result.keys()
                 results = [dict(zip(columns, row)) for row in rows]
@@ -503,7 +380,6 @@ Now generate the SQL query for the intent above:"""
 
             execution_time_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
-            # Log query execution
             query_log = SQLQueryLog(
                 session_id=conversation_id,
                 agent_name="sql_analytics",
@@ -518,66 +394,27 @@ Now generate the SQL query for the intent above:"""
             db.add(query_log)
             await db.commit()
 
-            self.logger.info(
-                "query_executed",
-                row_count=len(results),
-                execution_time_ms=execution_time_ms
-            )
-
             return results
 
         except SQLAlchemyError as e:
-            self.logger.error(
-                "query_execution_failed",
-                error=str(e),
-                query=query,
-                exc_info=True
-            )
-
-            # Log failed query
-            query_log = SQLQueryLog(
-                session_id=conversation_id,
-                agent_name="sql_analytics",
-                query_text=query,
-                error=str(e),
-                execution_time_ms=int((datetime.utcnow() - start_time).total_seconds() * 1000)
-            )
-            db.add(query_log)
-            await db.commit()
-
+            self.logger.error("query_execution_failed", error=str(e), query=query)
             raise
 
-    def _format_query_results(
-        self,
-        results: List[Dict[str, Any]],
-        query_intent: str
-    ) -> Dict[str, Any]:
-        """
-        Format query results for display
-        """
+    def _format_query_results(self, results: List[Dict[str, Any]], query_intent: str) -> Dict[str, Any]:
+        """Format query results for display."""
         if not results:
-            return {
-                "data": [],
-                "row_count": 0,
-                "summary": "No results found"
-            }
+            return {"data": [], "row_count": 0, "summary": "No results found"}
 
         row_count = len(results)
 
-        # Generate summary based on results
         if row_count == 1 and len(results[0]) == 1:
-            # Single scalar value (e.g., COUNT)
             key = list(results[0].keys())[0]
             value = results[0][key]
             summary = f"Result: {value}"
         else:
             summary = f"Found {row_count} result{'s' if row_count != 1 else ''}"
 
-        return {
-            "data": results,
-            "row_count": row_count,
-            "summary": summary
-        }
+        return {"data": results, "row_count": row_count, "summary": summary}
 
     async def _generate_insights(
         self,
@@ -587,117 +424,48 @@ Now generate the SQL query for the intent above:"""
         user_id: str,
         db: AsyncSession,
     ) -> Dict[str, Any]:
-        """
-        Generate proactive insights from query results
-        """
+        """Generate insights from query results."""
         results = formatted_results["data"]
-        row_count = formatted_results["row_count"]
-
-        if row_count == 0:
-            return {
-                "patterns": [],
-                "suggestions": ["Try adjusting your filters", "Upload more data if needed"]
-            }
+        if not results:
+            return {"patterns": [], "suggestions": []}
 
         try:
-            # Build prompt for insight generation
             prompt = f"""Analyze these SQL query results and provide brief insights.
 
 Query Intent: "{query_intent}"
+Results Summary: {len(results)} rows
+Sample: {json.dumps(results[:5], default=str)}
 
-Results Summary:
-- Row count: {row_count}
-- Sample data: {json.dumps(results[:5], default=str)}
-
-Provide insights as JSON:
-{{
-  "patterns": ["Pattern 1", "Pattern 2"],
-  "suggestions": ["Suggestion 1", "Suggestion 2"]
-}}
-
-Keep each item to 1 sentence. Focus on actionable insights."""
+Provide as JSON:
+{{"patterns": ["Pattern 1"], "suggestions": ["Suggestion 1"]}}"""
 
             response = await self.model.generate_content_async(
                 prompt,
-                generation_config={
-                    "temperature": 0.3,
-                    "max_output_tokens": 512,
-                }
+                generation_config={"temperature": 0.3, "max_output_tokens": 512}
             )
 
-            # Parse insights
-            insights_text = response.text.strip()
-            if insights_text.startswith("```json"):
-                insights_text = insights_text[7:]
-            if insights_text.startswith("```"):
-                insights_text = insights_text[3:]
-            if insights_text.endswith("```"):
-                insights_text = insights_text[:-3]
-            insights_text = insights_text.strip()
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
 
-            insights = json.loads(insights_text)
-            return insights
+            return json.loads(text.strip())
+        except:
+            return {"patterns": [], "suggestions": []}
 
-        except Exception as e:
-            self.logger.warning(
-                "insight_generation_failed",
-                error=str(e)
-            )
-            return {
-                "patterns": [],
-                "suggestions": []
-            }
-
-    async def _filter_by_quantitative(
-        self,
-        conversation_id: str,
-        user_id: str,
-        payload: Dict[str, Any],
-        db: AsyncSession,
-    ) -> AgentResponse:
-        """
-        Filter existing results by quantitative criteria
-        """
-        # Simplified version - delegates to generate_and_execute_query
-        return await self._generate_and_execute_query(
-            conversation_id,
-            user_id,
-            payload,
-            db
+    async def _filter_by_quantitative(self, conversation_id: str, user_id: str, payload: Dict, db: AsyncSession) -> AgentResponse:
+        """Filter by quantitative criteria - delegates to main method."""
+        return await self._execute_internal(
+            AgentMessage(conversation_id=conversation_id, action=payload.get("query_intent", "filter data"), payload=payload),
+            db, user_id
         )
 
-    async def _aggregate_data(
-        self,
-        conversation_id: str,
-        user_id: str,
-        payload: Dict[str, Any],
-        db: AsyncSession,
-    ) -> AgentResponse:
-        """
-        Perform aggregation operations
-        """
-        # Simplified version - delegates to generate_and_execute_query
-        return await self._generate_and_execute_query(
-            conversation_id,
-            user_id,
-            payload,
-            db
-        )
-
-    async def _calculate_metrics(
-        self,
-        conversation_id: str,
-        user_id: str,
-        payload: Dict[str, Any],
-        db: AsyncSession,
-    ) -> AgentResponse:
-        """
-        Calculate statistical metrics
-        """
-        # Simplified version - delegates to generate_and_execute_query
-        return await self._generate_and_execute_query(
-            conversation_id,
-            user_id,
-            payload,
-            db
+    async def _aggregate_data(self, conversation_id: str, user_id: str, payload: Dict, db: AsyncSession) -> AgentResponse:
+        """Aggregate data - delegates to main method."""
+        return await self._execute_internal(
+            AgentMessage(conversation_id=conversation_id, action=payload.get("query_intent", "aggregate data"), payload=payload),
+            db, user_id
         )

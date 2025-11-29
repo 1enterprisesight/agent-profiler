@@ -113,6 +113,49 @@ class Client(Base):
 
 
 # ============================================================================
+# DATA METADATA & DISCOVERY
+# ============================================================================
+
+class DataMetadata(Base):
+    """
+    Stores computed statistics and metadata about a user's data.
+    Used by DataDiscoveryAgent to provide context to other agents.
+    """
+    __tablename__ = "data_metadata"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(String(255), nullable=False, index=True)
+
+    # Overall stats
+    total_clients = Column(Integer, default=0)
+    sources_summary = Column(JSONB)  # {"csv": 100, "salesforce": 50}
+
+    # Field completeness (% of records with non-null values)
+    field_completeness = Column(JSONB)  # {"email": 85, "phone": 60, "aum": 45}
+
+    # Numeric field statistics
+    numeric_stats = Column(JSONB)  # {"aum": {"min": 0, "max": 5M, "avg": 500K, "p10": 50K, "p50": 200K, "p90": 1M}}
+
+    # Date ranges
+    date_ranges = Column(JSONB)  # {"created_at": {"min": "2020-01-01", "max": "2024-01-01"}}
+
+    # Categorical field distributions
+    categorical_distributions = Column(JSONB)  # {"status": {"active": 80, "inactive": 20}}
+
+    # Semantic context (AI-generated descriptions)
+    data_description = Column(Text)  # "Client portfolio data with financial metrics"
+    field_descriptions = Column(JSONB)  # {"aum": "Assets Under Management in USD"}
+
+    # Thresholds (computed from data)
+    computed_thresholds = Column(JSONB)  # {"high_value_aum": 500000, "high_engagement": 10}
+
+    # Metadata
+    last_computed_at = Column(TIMESTAMP, server_default=func.now())
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+
+# ============================================================================
 # DATA SYNC & JOBS
 # ============================================================================
 
@@ -204,6 +247,47 @@ class DataTransformationLog(Base):
 
     # Relationships
     sync_job = relationship("SyncJob", back_populates="transformations")
+
+
+class TransparencyEvent(Base):
+    """
+    Transparency events for Phase D Agent Architecture.
+    Stores every agent's thinking, decisions, and actions for complete user visibility.
+
+    Event types:
+    - received: Agent received a task from orchestrator
+    - thinking: LLM is interpreting/analyzing the task
+    - decision: Agent chose a capability/approach
+    - action: Agent is executing an operation
+    - result: Operation completed successfully
+    - error: Something failed
+    """
+    __tablename__ = "transparency_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(UUID(as_uuid=True), ForeignKey("conversation_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(String(255), nullable=False, index=True)
+    agent_name = Column(String(100), nullable=False, index=True)
+
+    # Event classification
+    event_type = Column(String(50), nullable=False)  # received, thinking, decision, action, result, error
+
+    # Summary (always shown in collapsed UI)
+    title = Column(String(500), nullable=False)
+
+    # Verbose details (shown on expand)
+    details = Column(JSONB)
+
+    # Hierarchy for nested events
+    parent_event_id = Column(UUID(as_uuid=True), ForeignKey("transparency_events.id"))
+    step_number = Column(Integer)
+
+    # Timing
+    created_at = Column(TIMESTAMP, server_default=func.now(), index=True)
+    duration_ms = Column(Integer)
+
+    # Self-referential relationship for parent/child events
+    parent_event = relationship("TransparencyEvent", remote_side=[id], backref="child_events")
 
 
 # ============================================================================

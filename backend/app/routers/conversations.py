@@ -15,7 +15,7 @@ import structlog
 
 from app.database import get_db_session
 from app.auth import get_current_user, User
-from app.models import Conversation, ConversationMessage
+from app.models import Conversation, ConversationMessage, TransparencyEvent
 from app.agents.base import AgentMessage, AgentStatus
 from app.agents.orchestrator import OrchestratorAgent
 from app.agents.data_ingestion import DataIngestionAgent
@@ -25,6 +25,7 @@ from app.agents.pattern_recognition import PatternRecognitionAgent
 from app.agents.segmentation import SegmentationAgent
 from app.agents.benchmark import BenchmarkAgent
 from app.agents.recommendation import RecommendationAgent
+from app.agents.data_discovery import DataDiscoveryAgent
 
 
 logger = structlog.get_logger()
@@ -38,6 +39,7 @@ pattern_recognition = PatternRecognitionAgent()
 segmentation = SegmentationAgent()
 benchmark = BenchmarkAgent()
 recommendation = RecommendationAgent()
+data_discovery = DataDiscoveryAgent()
 
 # Build agent registry
 agent_registry = {
@@ -48,6 +50,7 @@ agent_registry = {
     "segmentation": segmentation,
     "benchmark": benchmark,
     "recommendation": recommendation,
+    "data_discovery": data_discovery,
 }
 
 # Initialize orchestrator with complete agent registry
@@ -59,6 +62,15 @@ class ChatRequest(BaseModel):
     message: str
     conversation_id: Optional[str] = None
     context: Optional[dict] = None
+
+
+class ChatStartResponse(BaseModel):
+    """Response from async chat start"""
+    conversation_id: str
+    message_id: str
+    status: str
+    stream_url: str
+    timestamp: str
 
 
 class ChatResponse(BaseModel):
@@ -80,6 +92,205 @@ class ConversationSummary(BaseModel):
     message_count: int
 
 
+import asyncio
+from app.database import async_session_factory
+
+# Store for background tasks
+_background_tasks: dict = {}
+
+
+async def _process_chat_background(
+    conversation_id: str,
+    user_id: str,
+    user_message: str,
+    context: dict,
+):
+    """
+    Process chat in background, storing results when complete.
+    Events are emitted to transparency_events table during processing.
+    """
+    async with async_session_factory() as db:
+        try:
+            logger.info(
+                "background_chat_started",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+
+            # Orchestrate multi-agent workflow
+            orchestrator_message = AgentMessage(
+                agent_type="orchestrator",
+                action="orchestrate",
+                payload={
+                    "user_query": user_message,
+                    "context": context,
+                },
+                conversation_id=conversation_id,
+            )
+
+            orchestration_response = await orchestrator.execute(
+                orchestrator_message,
+                db,
+                user_id
+            )
+
+            # Extract workflow results
+            if orchestration_response.is_success:
+                result = orchestration_response.result
+                answer = result.get("answer", "Workflow completed.")
+                agents_used = result.get("agents_used", [])
+                execution_plan = result.get("execution_plan", {})
+                workflow_results = result.get("workflow_results", [])
+            else:
+                answer = f"Error: {orchestration_response.error}"
+                agents_used = []
+                execution_plan = {}
+                workflow_results = []
+
+            # Save assistant message
+            conversation = await db.get(Conversation, uuid.UUID(conversation_id))
+            if conversation:
+                assistant_message = ConversationMessage(
+                    session_id=conversation.id,
+                    role="assistant",
+                    content=answer,
+                    meta_data={
+                        "agents_used": agents_used,
+                        "execution_plan": execution_plan,
+                        "workflow_results": workflow_results,
+                        "orchestration_metadata": orchestration_response.metadata,
+                        "status": orchestration_response.status.value,
+                    }
+                )
+                db.add(assistant_message)
+                conversation.updated_at = datetime.utcnow()
+                await db.commit()
+
+            logger.info(
+                "background_chat_completed",
+                conversation_id=conversation_id,
+                status=orchestration_response.status.value,
+                agents_used=agents_used,
+            )
+
+        except Exception as e:
+            logger.error(
+                "background_chat_failed",
+                conversation_id=conversation_id,
+                error=str(e),
+                exc_info=True,
+            )
+            # Save error message
+            try:
+                conversation = await db.get(Conversation, uuid.UUID(conversation_id))
+                if conversation:
+                    error_message = ConversationMessage(
+                        session_id=conversation.id,
+                        role="assistant",
+                        content=f"An error occurred: {str(e)}",
+                        meta_data={"error": str(e), "status": "error"}
+                    )
+                    db.add(error_message)
+                    await db.commit()
+            except Exception:
+                pass
+
+
+@router.post("/chat/start", response_model=ChatStartResponse)
+async def chat_start(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Start a chat asynchronously and return immediately.
+
+    This endpoint:
+    1. Creates the conversation
+    2. Saves the user message
+    3. Starts processing in the background
+    4. Returns immediately with conversation_id
+
+    The client should then connect to /api/stream/events/{conversation_id}
+    to receive real-time transparency events via SSE.
+    """
+    user_id = current_user.user_id
+    try:
+        conversation_id = request.conversation_id or str(uuid.uuid4())
+
+        # Get or create conversation
+        if request.conversation_id:
+            result = await db.execute(
+                select(Conversation).where(
+                    Conversation.id == uuid.UUID(conversation_id),
+                    Conversation.user_id == user_id
+                )
+            )
+            conversation = result.scalar_one_or_none()
+            if not conversation:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Conversation not found"
+                )
+        else:
+            # Create new conversation
+            conversation = Conversation(
+                id=uuid.UUID(conversation_id),
+                user_id=user_id,
+                title=request.message[:100],
+            )
+            db.add(conversation)
+
+        # Save user message
+        user_message = ConversationMessage(
+            session_id=conversation.id,
+            role="user",
+            content=request.message,
+        )
+        db.add(user_message)
+        await db.commit()
+
+        logger.info(
+            "chat_start_request",
+            conversation_id=conversation_id,
+            user_id=user_id,
+            message=request.message[:100],
+        )
+
+        # Start background processing
+        task = asyncio.create_task(
+            _process_chat_background(
+                conversation_id=conversation_id,
+                user_id=user_id,
+                user_message=request.message,
+                context=request.context or {},
+            )
+        )
+        _background_tasks[conversation_id] = task
+
+        return ChatStartResponse(
+            conversation_id=conversation_id,
+            message_id=str(user_message.id),
+            status="processing",
+            stream_url=f"/api/stream/events/{conversation_id}",
+            timestamp=datetime.utcnow().isoformat(),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(
+            "chat_start_failed",
+            error=str(e),
+            user_id=user_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Chat start failed: {str(e)}"
+        )
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
@@ -87,7 +298,9 @@ async def chat(
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Send a message and get agent response
+    Send a message and get agent response (synchronous - waits for completion).
+
+    For real-time streaming, use /chat/start instead.
 
     The orchestrator will route the request to the appropriate specialized agent
     """
@@ -192,6 +405,31 @@ async def chat(
         conversation.updated_at = datetime.utcnow()
         await db.commit()
 
+        # Fetch transparency events for this session
+        events_result = await db.execute(
+            select(TransparencyEvent)
+            .where(TransparencyEvent.session_id == uuid.UUID(conversation_id))
+            .order_by(TransparencyEvent.created_at)
+        )
+        transparency_events = events_result.scalars().all()
+
+        # Convert events to dict format for JSON response
+        events_data = [
+            {
+                "id": str(event.id),
+                "session_id": str(event.session_id),
+                "agent_name": event.agent_name,
+                "event_type": event.event_type,
+                "title": event.title,
+                "details": event.details or {},
+                "parent_event_id": str(event.parent_event_id) if event.parent_event_id else None,
+                "step_number": event.step_number,
+                "created_at": event.created_at.isoformat() if event.created_at else None,
+                "duration_ms": event.duration_ms,
+            }
+            for event in transparency_events
+        ]
+
         return ChatResponse(
             conversation_id=conversation_id,
             message_id=str(assistant_message.id),
@@ -203,7 +441,8 @@ async def chat(
                 "workflow_summary": {
                     "total_steps": len(workflow_results),
                     "successful_steps": sum(1 for r in workflow_results if r.get("success"))
-                }
+                },
+                "transparency_events": events_data,
             },
             agent_used="orchestrator",
             status=orchestration_response.status.value,
