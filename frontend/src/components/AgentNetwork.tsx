@@ -1,4 +1,13 @@
 import { useEffect, useState, useMemo, useRef } from 'react';
+import {
+  Inbox,
+  Brain,
+  ClipboardList,
+  Rocket,
+  CheckCircle,
+  AlertCircle,
+  Bot,
+} from 'lucide-react';
 import type { Agent, AgentVisualState, TransparencyEvent } from '@/types';
 
 // Agent definitions with positions for network layout
@@ -97,14 +106,25 @@ function eventTypeToVisualState(eventType: string): AgentVisualState {
   }
 }
 
-// Event type icons
-const eventIcons: Record<string, string> = {
-  received: '📥',
-  thinking: '🤔',
-  decision: '📋',
-  action: '🚀',
-  result: '✅',
-  error: '❌',
+// Event type icons - returns lucide-react icon components
+const EventIcon = ({ type, color }: { type: string; color: string }) => {
+  const iconProps = { className: 'w-5 h-5', style: { color } };
+  switch (type) {
+    case 'received':
+      return <Inbox {...iconProps} />;
+    case 'thinking':
+      return <Brain {...iconProps} />;
+    case 'decision':
+      return <ClipboardList {...iconProps} />;
+    case 'action':
+      return <Rocket {...iconProps} />;
+    case 'result':
+      return <CheckCircle {...iconProps} />;
+    case 'error':
+      return <AlertCircle {...iconProps} />;
+    default:
+      return null;
+  }
 };
 
 interface AgentNetworkProps {
@@ -417,15 +437,17 @@ function NetworkNode({
         }}
       >
         {/* Event icon or agent initial */}
-        <span className="text-lg">
+        <span className="flex items-center justify-center">
           {currentEvent && isActive ? (
-            eventIcons[currentEvent.event_type]
+            <EventIcon type={currentEvent.event_type} color={agent.color} />
+          ) : isOrchestrator ? (
+            <Bot className="w-6 h-6" style={{ color: agent.color }} />
           ) : (
             <span
               className="font-bold"
-              style={{ color: agent.color, fontSize: isOrchestrator ? '1.5rem' : '1rem' }}
+              style={{ color: agent.color, fontSize: '1rem' }}
             >
-              {isOrchestrator ? '🤖' : agent.name.charAt(0)}
+              {agent.name.charAt(0)}
             </span>
           )}
         </span>

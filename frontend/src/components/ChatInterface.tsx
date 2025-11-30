@@ -179,38 +179,38 @@ export function ChatInterface({
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-800 rounded-lg">
+    <div className="flex flex-col min-h-[500px] bg-slate-800 rounded-lg">
       {/* Header */}
-      <div className="p-4 border-b border-slate-700">
+      <div className="p-3 border-b border-slate-700 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-bold text-white">Multi-Agent Chat</h2>
-            <p className="text-sm text-slate-400">Ask questions about your client data</p>
+            <h2 className="text-lg font-bold text-white">Multi-Agent Chat</h2>
+            <p className="text-xs text-slate-400">Ask questions about your client data</p>
           </div>
           {messages.length > 0 && (
             <button
               onClick={handleNewChat}
               disabled={isLoading}
-              className="flex items-center gap-2 px-3 py-2 text-sm text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-2 py-1 text-xs text-slate-300 hover:text-white hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               title="Start a new conversation"
             >
-              <RotateCcw className="w-4 h-4" />
-              New Chat
+              <RotateCcw className="w-3 h-3" />
+              New
             </button>
           )}
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      {/* Messages - Scrollable area */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-[300px] max-h-[500px]">
         {messages.length === 0 && (
           <div className="text-center text-slate-400 mt-8">
             <p className="text-lg mb-2">Welcome to Agent Profiler!</p>
             <p className="text-sm">Start a conversation with the multi-agent system</p>
-            <div className="mt-6 grid grid-cols-2 gap-3 max-w-2xl mx-auto">
+            <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto">
               <SampleQuestion onClick={setInput} text="How many clients do I have?" />
               <SampleQuestion onClick={setInput} text="Show me high-value clients" />
-              <SampleQuestion onClick={setInput} text="Find patterns in client data" />
+              <SampleQuestion onClick={setInput} text="Count clients by company" />
               <SampleQuestion onClick={setInput} text="Segment clients by engagement" />
             </div>
           </div>

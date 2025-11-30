@@ -38,26 +38,27 @@ class SegmentationAgent(BaseAgent):
         """
         return {
             "name": "segmentation",
-            "purpose": "Group clients into meaningful cohorts, segments, and personas",
+            "purpose": "AI-driven client clustering, personas, and behavioral segmentation",
             "when_to_use": [
-                "User wants to group or cluster clients",
-                "User asks about segments, cohorts, or personas",
-                "User wants to find similar clients",
-                "User asks for client profiling or categorization",
-                "User wants to understand client types"
+                "User wants AI to identify natural clusters or segments in their data",
+                "User asks for personas, profiles, or client archetypes",
+                "User wants to find clients behaviorally similar to others",
+                "User asks to 'segment by engagement' or 'segment by behavior'",
+                "User wants intelligent categorization based on multiple attributes"
             ],
             "when_not_to_use": [
-                "User needs numerical calculations or aggregations",
-                "User is searching for specific text in notes",
-                "User wants to import or upload data",
-                "User needs exact value filtering (use SQL instead)"
+                "User wants simple COUNT or GROUP BY queries (use sql_analytics)",
+                "User asks 'count by company' or 'breakdown by city' (use sql_analytics)",
+                "User needs numerical aggregations like SUM, AVG (use sql_analytics)",
+                "User is searching for text content (use semantic_search)",
+                "User wants to import or upload data (use data_ingestion)"
             ],
             "example_tasks": [
                 "Segment my clients by engagement level",
-                "Find clients similar to my top performers",
                 "Create personas for my client base",
-                "Group clients by investment style",
-                "Identify different client types"
+                "Find clients similar to my top performers",
+                "Identify different client archetypes",
+                "Cluster clients by their behavioral patterns"
             ],
             "data_source_aware": True  # Can work with multi-source data
         }

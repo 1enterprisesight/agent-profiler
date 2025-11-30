@@ -671,10 +671,7 @@ class OrchestratorAgent(BaseAgent):
                 schema_desc += f"  TEXT fields (→ Semantic Search): {', '.join(field_names)}\n"
 
             schema_desc += """
-ROUTING RULE: If the query mentions a field name above, route to the agent that handles that field type!
-- "show top companies" + companies is TEXT → Semantic Search (for pattern matching)
-- "show total revenue" + revenue is NUMERIC → SQL Analytics (for aggregation)
-- "clients contacted before 2024" + date field → SQL Analytics (for date filtering)
+Use this schema information along with the agent descriptions above to determine which agent(s) are best suited for the user's query. Consider what type of operation the user is asking for (counting, searching, aggregating, etc.) and match it to the agent whose purpose and examples align best.
 """
 
         # Build data source context

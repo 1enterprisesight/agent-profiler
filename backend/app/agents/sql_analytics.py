@@ -32,27 +32,30 @@ class SQLAnalyticsAgent(BaseAgent):
         """Agent describes itself for dynamic discovery by orchestrator."""
         return {
             "name": "sql_analytics",
-            "purpose": "Quantitative analysis and SQL query generation for numerical data",
+            "purpose": "Quantitative analysis using SQL - counting, aggregating, filtering, and ranking data",
             "when_to_use": [
-                "User needs mathematical calculations (sum, average, count)",
-                "User wants to filter by exact values or ranges",
-                "User needs date/time calculations",
-                "User wants aggregations with GROUP BY",
-                "User needs to count, sort, or rank records",
-                "User asks 'how many', 'total', 'average', 'top N'"
+                "User needs to COUNT records (e.g., 'how many clients', 'number of contacts')",
+                "User wants aggregations: SUM, AVG, MIN, MAX, COUNT",
+                "User wants to GROUP BY any field - including text fields like company, city, or category",
+                "User asks for 'most common', 'top N', 'breakdown by', 'count by'",
+                "User needs mathematical calculations on numeric fields",
+                "User wants to filter by exact values, ranges, or dates",
+                "User needs to sort or rank records"
             ],
             "when_not_to_use": [
-                "User is searching for text in notes or descriptions",
-                "User wants fuzzy or semantic matching",
-                "User needs pattern recognition or anomaly detection",
-                "User is looking for similar items (use semantic search)"
+                "User is searching for meaning/concepts in text (use semantic_search)",
+                "User wants fuzzy text matching or similarity (use semantic_search)",
+                "User wants AI-driven clustering or personas (use segmentation)",
+                "User needs pattern recognition or anomaly detection (use pattern_recognition)"
             ],
             "example_tasks": [
                 "How many clients do I have?",
+                "Show the most common companies and count of clients for each",
                 "What is the average AUM per client?",
+                "Count clients by data source",
+                "Show top 10 cities by number of clients",
                 "Find clients with AUM over $1M",
-                "Show clients not contacted in 60 days",
-                "Count clients by data source"
+                "Breakdown of clients by company"
             ],
             "data_source_aware": True
         }
