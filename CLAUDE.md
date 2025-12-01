@@ -291,6 +291,15 @@ Before suggesting fixes:
 3. **Understand the root cause** - Don't fix symptoms, fix causes
 4. **Verify against architecture** - Does the fix align with NO HARDCODING principle?
 
+### Testing
+
+**We do NOT test locally. All testing is done on Cloud Run.**
+
+- Deploy to Cloud Run first
+- Test against the deployed service
+- Use the live URLs to verify functionality
+- Check Cloud Run logs for errors: `gcloud run logs read agent-profiler-api --project=client-profiler-473903`
+
 ---
 
 ## Version History
