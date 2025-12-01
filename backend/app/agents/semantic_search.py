@@ -228,7 +228,7 @@ Respond with JSON only:
         try:
             response = await self.model.generate_content_async(
                 prompt,
-                generation_config={"temperature": 0.1, "max_output_tokens": 512}
+                generation_config={"temperature": 0.1}
             )
 
             text = response.text.strip()
@@ -276,7 +276,12 @@ Respond with JSON only:
     ) -> Dict[str, Any]:
         """Search for concepts in unstructured text fields."""
         search_terms = payload.get("search_terms", [])
-        fields = payload.get("fields", ["notes", "description", "goals"])
+        # Get fields from payload or schema context
+        fields = payload.get("fields")
+        if not fields:
+            schema_context = payload.get("schema_context", {})
+            text_fields = schema_context.get("text_fields", [])
+            fields = text_fields if text_fields else ["notes", "description"]  # Minimal fallback
 
         if not search_terms:
             # Extract from task if not provided
@@ -315,7 +320,7 @@ Return ONLY a comma-separated list:"""
 
             response = await self.model.generate_content_async(
                 prompt,
-                generation_config={"temperature": 0.3, "max_output_tokens": 256}
+                generation_config={"temperature": 0.3}
             )
 
             expanded = [t.strip() for t in response.text.split(",")]
@@ -377,14 +382,14 @@ Return ONLY a comma-separated list:"""
     ) -> Dict[str, Any]:
         """Fuzzy matching on names or text."""
         query_text = payload.get("query_text", "")
-        field = payload.get("field", "client_name")
+        field = payload.get("field")
+        if not field:
+            # Default to client_name for fuzzy matching but log it
+            field = "client_name"
+            self.logger.info("fuzzy_match_using_default_field", field=field)
 
         if not query_text:
             return {"matches": [], "match_count": 0, "message": "No query text"}
-
-        allowed_fields = ['client_name', 'contact_email', 'company_name']
-        if field not in allowed_fields:
-            field = 'client_name'
 
         query = f"""
         SELECT id, client_name, contact_email, core_data, custom_data,

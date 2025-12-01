@@ -28,17 +28,27 @@ async def get_new_events(
     db: AsyncSession,
     conversation_id: str,
     user_id: str,
-    seen_event_ids: Set[str]
+    seen_event_ids: Set[str],
+    after_timestamp=None
 ) -> list:
     """
     Fetch transparency events not yet seen by the client.
+
+    If after_timestamp is provided, only fetches events created after that time
+    (used for multi-query conversations to only show current query's events).
     """
     try:
+        conditions = [
+            TransparencyEvent.session_id == uuid.UUID(conversation_id),
+            TransparencyEvent.user_id == user_id
+        ]
+
+        # Only get events after the user message timestamp
+        if after_timestamp:
+            conditions.append(TransparencyEvent.created_at > after_timestamp)
+
         query = select(TransparencyEvent).where(
-            and_(
-                TransparencyEvent.session_id == uuid.UUID(conversation_id),
-                TransparencyEvent.user_id == user_id
-            )
+            and_(*conditions)
         ).order_by(TransparencyEvent.created_at)
 
         result = await db.execute(query)
@@ -77,29 +87,49 @@ def is_workflow_complete(events: list) -> bool:
     for event in events:
         if event.agent_name == "orchestrator":
             if event.event_type in ("result", "error"):
-                # Check if this is the final result (high step number or contains "complete")
+                # Any result/error event from orchestrator with step_number > 0 is final
+                # (removed overly strict "complete" title requirement)
                 if event.step_number and event.step_number > 0:
-                    if "complete" in (event.title or "").lower():
-                        return True
-                    if event.event_type == "error":
-                        return True
+                    return True
     return False
 
 
 async def check_conversation_has_response(
     db: AsyncSession,
-    conversation_id: str
+    conversation_id: str,
+    after_message_id: Optional[str] = None
 ) -> dict:
     """
     Check if the conversation has an assistant response (meaning workflow is done).
     Returns the response if found.
+
+    If after_message_id is provided, only looks for assistant messages that were
+    created after that user message (for multi-query conversations).
     """
     try:
-        query = select(ConversationMessage).where(
-            and_(
-                ConversationMessage.session_id == uuid.UUID(conversation_id),
-                ConversationMessage.role == "assistant"
+        # If we have a specific user message to track, find its timestamp first
+        after_timestamp = None
+        if after_message_id:
+            user_msg_query = select(ConversationMessage).where(
+                ConversationMessage.id == uuid.UUID(after_message_id)
             )
+            user_msg_result = await db.execute(user_msg_query)
+            user_msg = user_msg_result.scalar_one_or_none()
+            if user_msg:
+                after_timestamp = user_msg.created_at
+
+        # Build query for assistant response
+        conditions = [
+            ConversationMessage.session_id == uuid.UUID(conversation_id),
+            ConversationMessage.role == "assistant"
+        ]
+
+        # Only look for responses after the tracked user message
+        if after_timestamp:
+            conditions.append(ConversationMessage.created_at > after_timestamp)
+
+        query = select(ConversationMessage).where(
+            and_(*conditions)
         ).order_by(ConversationMessage.created_at.desc()).limit(1)
 
         result = await db.execute(query)
@@ -123,6 +153,7 @@ async def check_conversation_has_response(
 async def stream_events(
     conversation_id: str,
     token: Optional[str] = Query(None, description="JWT token for SSE auth"),
+    message_id: Optional[str] = Query(None, description="User message ID to track (for multi-query conversations)"),
     db: AsyncSession = Depends(get_db_session),
 ):
     """
@@ -176,6 +207,22 @@ async def stream_events(
             detail="Conversation not found"
         )
 
+    # Get user message timestamp for filtering (if message_id provided)
+    user_message_timestamp = None
+    if message_id:
+        try:
+            msg_result = await db.execute(
+                select(ConversationMessage).where(
+                    ConversationMessage.id == uuid.UUID(message_id)
+                )
+            )
+            user_msg = msg_result.scalar_one_or_none()
+            if user_msg:
+                user_message_timestamp = user_msg.created_at
+                logger.info("tracking_message", message_id=message_id, timestamp=str(user_message_timestamp))
+        except Exception as e:
+            logger.warning("failed_to_get_user_message_timestamp", error=str(e))
+
     async def event_generator():
         """Generate SSE events as they become available."""
         seen_event_ids: Set[str] = set()
@@ -189,9 +236,10 @@ async def stream_events(
                 # Create a new session for each poll to avoid stale data
                 from app.database import async_session_factory
                 async with async_session_factory() as poll_db:
-                    # Get new events
+                    # Get new events (optionally filtered by timestamp)
                     new_events = await get_new_events(
-                        poll_db, conversation_id, user_id, seen_event_ids
+                        poll_db, conversation_id, user_id, seen_event_ids,
+                        after_timestamp=user_message_timestamp
                     )
 
                     # Send each new event
@@ -201,11 +249,22 @@ async def stream_events(
 
                         yield f"event: event\ndata: {json.dumps(event_data)}\n\n"
 
-                    # Check if workflow is complete
-                    if is_workflow_complete(new_events):
-                        # Get the final response
+                    # Check if workflow is complete (only for NEW events)
+                    workflow_done = is_workflow_complete(new_events)
+
+                    # Fallback: Also check if assistant message exists (every 5 iterations)
+                    # This catches cases where events don't have the expected format
+                    if not workflow_done and iteration % 5 == 0:
                         response_check = await check_conversation_has_response(
-                            poll_db, conversation_id
+                            poll_db, conversation_id, after_message_id=message_id
+                        )
+                        if response_check.get("complete"):
+                            workflow_done = True
+
+                    if workflow_done:
+                        # Get the final response (only responses after our tracked message)
+                        response_check = await check_conversation_has_response(
+                            poll_db, conversation_id, after_message_id=message_id
                         )
 
                         complete_data = {

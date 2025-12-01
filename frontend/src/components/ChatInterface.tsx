@@ -152,17 +152,27 @@ export function ChatInterface({
     onTransparencyEvents([]);
     onAgentsActive(['orchestrator']); // Start with orchestrator active
 
+    // IMPORTANT: Close any existing EventSource before starting a new one
+    // This prevents the previous query's "complete" event from being displayed
+    // as the current query's response
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
     try {
       // Start chat asynchronously
       const startResponse = await chatApi.startChat(messageText, conversationId);
       setConversationId(startResponse.conversation_id);
 
       // Connect to SSE stream for real-time events
+      // Pass message_id to track this specific query (prevents sync issues in multi-query conversations)
       eventSourceRef.current = chatApi.streamEvents(
         startResponse.conversation_id,
         handleStreamEvent,
         handleStreamComplete,
-        handleStreamError
+        handleStreamError,
+        startResponse.message_id
       );
 
     } catch (error) {

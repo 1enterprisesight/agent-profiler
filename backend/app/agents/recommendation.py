@@ -154,6 +154,40 @@ Respond JSON: {{"capability": "name", "parameters": {{}}}}"""
             return await self._suggest_improvements(conversation_id, user_id, params, db)
         return await self._next_best_action(conversation_id, user_id, params, db)
 
+    async def _extract_prioritization_criteria(self, query: str) -> str:
+        """Use LLM to extract the prioritization criteria from query."""
+        try:
+            prompt = f"""What criteria should be used to prioritize based on this query?
+
+Query: "{query}"
+
+Return ONLY the criteria word (e.g., "impact", "urgency", "value", "risk", "engagement")."""
+
+            response = await self.model.generate_content_async(
+                prompt,
+                generation_config={"temperature": 0.1}
+            )
+            return response.text.strip().lower().replace('"', '').replace("'", "") or "impact"
+        except:
+            return "impact"
+
+    async def _extract_focus_area(self, query: str) -> str:
+        """Use LLM to extract the improvement focus area from query."""
+        try:
+            prompt = f"""What area should improvements focus on based on this query?
+
+Query: "{query}"
+
+Return ONLY the focus area (e.g., "data_quality", "engagement", "process", "communication", "general")."""
+
+            response = await self.model.generate_content_async(
+                prompt,
+                generation_config={"temperature": 0.1}
+            )
+            return response.text.strip().lower().replace('"', '').replace("'", "") or "general"
+        except:
+            return "general"
+
     async def _recommend_actions(self, conversation_id: str, user_id: str, payload: Dict, db: AsyncSession):
         """Generate prioritized action recommendations."""
         context = payload.get("context", {})
@@ -191,7 +225,14 @@ Return JSON: [{{"action": "...", "reasoning": "...", "priority": "high/medium/lo
 
     async def _prioritize_tasks(self, conversation_id: str, user_id: str, payload: Dict, db: AsyncSession):
         """Prioritize tasks or client outreach."""
-        criteria = payload.get("criteria", "impact")
+        criteria = payload.get("criteria")
+        if not criteria:
+            # Let LLM determine the best prioritization criteria
+            original_query = payload.get("original_user_query", "")
+            if original_query:
+                criteria = await self._extract_prioritization_criteria(original_query)
+            if not criteria:
+                criteria = "impact"  # Generic fallback
 
         query = """SELECT id, client_name, core_data, computed_metrics
                    FROM clients WHERE user_id = :user_id LIMIT 200"""
@@ -216,7 +257,14 @@ Return JSON: [{{"item": "description", "priority_rank": 1, "reasoning": "...", "
 
     async def _suggest_improvements(self, conversation_id: str, user_id: str, payload: Dict, db: AsyncSession):
         """Suggest improvements."""
-        focus_area = payload.get("focus_area", "data_quality")
+        focus_area = payload.get("focus_area")
+        if not focus_area:
+            # Let LLM determine the focus area
+            original_query = payload.get("original_user_query", "")
+            if original_query:
+                focus_area = await self._extract_focus_area(original_query)
+            if not focus_area:
+                focus_area = "general"  # Let LLM decide what to improve
 
         query = """SELECT COUNT(*) as total, COUNT(contact_email) as has_email
                    FROM clients WHERE user_id = :user_id"""

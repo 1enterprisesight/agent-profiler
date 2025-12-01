@@ -141,12 +141,19 @@ class SQLAnalyticsAgent(BaseAgent):
                 step_number=3
             )
 
+            # Get original user query and schema from enriched payload (passed by orchestrator)
+            original_user_query = payload.get("original_user_query", query_intent)
+            schema_context = payload.get("schema_context", {})
+
+            # Build context from payload
+            query_context = payload.get("context", {})
+
             # Generate SQL
             sql_query = await self._generate_sql(
                 query_intent,
                 payload.get("filters", []),
                 payload.get("client_ids"),
-                payload.get("context", {}),
+                query_context,
                 conversation_id,
                 user_id,
                 db
@@ -195,8 +202,58 @@ class SQLAnalyticsAgent(BaseAgent):
                 step_number=4
             )
 
-            # Execute query
-            results = await self._execute_query(sql_query, conversation_id, user_id, db)
+            # Execute query with error recovery (single retry)
+            results = None
+            executed_query = sql_query
+            try:
+                results = await self._execute_query(sql_query, conversation_id, user_id, db)
+            except SQLAlchemyError as sql_error:
+                # Attempt LLM-based SQL repair (single retry)
+                self.logger.warning(
+                    "sql_execution_failed_attempting_repair",
+                    error=str(sql_error),
+                    query_preview=sql_query[:100]
+                )
+
+                # Rollback before retry
+                try:
+                    await db.rollback()
+                except Exception:
+                    pass
+
+                try:
+                    repaired_query = await self._repair_sql_with_llm(
+                        sql_query,
+                        str(sql_error),
+                        schema_context,
+                        original_user_query,
+                        conversation_id,
+                        user_id,
+                        db
+                    )
+
+                    # Validate repaired query
+                    repair_validation = self._validate_sql_query(repaired_query)
+                    if not repair_validation["safe"]:
+                        raise ValueError(f"Repaired query unsafe: {repair_validation['reason']}")
+
+                    # Execute repaired query
+                    results = await self._execute_query(repaired_query, conversation_id, user_id, db)
+                    executed_query = repaired_query
+
+                    self.logger.info(
+                        "sql_repair_successful",
+                        original_error=str(sql_error)[:100]
+                    )
+
+                except Exception as repair_error:
+                    self.logger.error(
+                        "sql_repair_also_failed",
+                        original_error=str(sql_error),
+                        repair_error=str(repair_error)
+                    )
+                    # Re-raise the original error
+                    raise sql_error
             formatted = self._format_query_results(results, query_intent)
 
             # Generate insights
@@ -225,15 +282,17 @@ class SQLAnalyticsAgent(BaseAgent):
             return AgentResponse(
                 status=AgentStatus.COMPLETED,
                 result={
-                    "query": sql_query,
+                    "query": executed_query,
                     "results": formatted["data"],
                     "summary": formatted["summary"],
                     "insights": insights,
-                    "row_count": formatted["row_count"]
+                    "row_count": formatted["row_count"],
+                    "was_repaired": executed_query != sql_query,
                 },
                 metadata={
                     "model_used": settings.gemini_pro_model,
-                    "duration_ms": duration_ms
+                    "duration_ms": duration_ms,
+                    "original_query": sql_query if executed_query != sql_query else None,
                 }
             )
 
@@ -281,6 +340,7 @@ class SQLAnalyticsAgent(BaseAgent):
         schema_desc = build_sql_schema_description(schema_context)
 
         context_str = f"\n\nAdditional Context:\n{json.dumps(context, indent=2)}" if context else ""
+
         client_ids_clause = ""
         if client_ids:
             ids_str = "', '".join(client_ids)
@@ -290,18 +350,16 @@ class SQLAnalyticsAgent(BaseAgent):
 
 {schema_desc}
 
-CRITICAL RULES:
+RULES:
 1. SECURITY - MANDATORY: Every query MUST include "WHERE user_id = :user_id"
-2. USE EXACT FIELD PATHS from schema - e.g., custom_data->>'companies', core_data->>'aum'
-3. ONLY use quantitative operations: SUM, AVG, COUNT, MIN, MAX, date math, GROUP BY
-4. NEVER use LIKE, ILIKE, regex, or full-text search - those belong to Semantic Search
-5. For numeric operations: cast to numeric, e.g., (core_data->>'aum')::numeric
-6. Always include LIMIT (default 100) for SELECT queries, unless doing COUNT/SUM/AVG aggregation
-7. For custom fields not in core columns, use: custom_data->>'field_name' or core_data->>'field_name'
+2. Use the schema field paths shown above (custom_data->>'field' or core_data->>'field')
+3. Cast to numeric for math operations: (field)::numeric
+4. NEVER use LIKE/ILIKE/regex - use Semantic Search agent for text matching
+5. Use appropriate ORDER BY and LIMIT based on what's being asked
 
 Query Intent: "{query_intent}"
-Filters: {json.dumps(filters) if filters else "None"}{client_ids_clause}{context_str}
-
+Filters: {json.dumps(filters) if filters else "None"}{client_ids_clause}
+{context_str}
 Return ONLY the SELECT statement, no markdown:"""
 
         try:
@@ -333,19 +391,104 @@ Return ONLY the SELECT statement, no markdown:"""
             self.logger.error("sql_generation_failed", error=str(e), exc_info=True)
             return ""
 
+    async def _repair_sql_with_llm(
+        self,
+        failed_query: str,
+        error_message: str,
+        schema_context: Dict[str, Any],
+        original_intent: str,
+        conversation_id: str,
+        user_id: str,
+        db: AsyncSession,
+    ) -> str:
+        """
+        Use LLM to repair a failed SQL query. Single retry attempt.
+        """
+        # Build schema description for repair context
+        schema_desc = build_sql_schema_description(schema_context)
+
+        prompt = f"""Fix this failed SQL query. The query failed with the error shown below.
+
+ORIGINAL QUERY INTENT: {original_intent}
+
+FAILED SQL QUERY:
+{failed_query}
+
+DATABASE ERROR:
+{error_message}
+
+{schema_desc}
+
+RULES:
+1. Fix the specific error mentioned
+2. Use correct column names from the schema
+3. Keep the WHERE user_id = :user_id clause
+4. Return ONLY the corrected SELECT statement, no explanation
+
+Corrected SQL:"""
+
+        try:
+            response = await self.model.generate_content_async(
+                prompt,
+                generation_config={"temperature": 0.1, "max_output_tokens": 1024}
+            )
+
+            await self.log_llm_conversation(
+                db=db,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                model_name=settings.gemini_pro_model,
+                prompt=prompt,
+                response=response.text,
+            )
+
+            sql = response.text.strip()
+            if sql.startswith("```sql"):
+                sql = sql[6:]
+            elif sql.startswith("```"):
+                sql = sql[3:]
+            if sql.endswith("```"):
+                sql = sql[:-3]
+
+            self.logger.info(
+                "sql_repair_attempted",
+                original_error=error_message[:100],
+                repaired_query_length=len(sql)
+            )
+
+            return sql.strip()
+
+        except Exception as e:
+            self.logger.error(
+                "sql_repair_failed",
+                error=str(e),
+                original_error=error_message
+            )
+            raise
+
     def _validate_sql_query(self, query: str) -> Dict[str, Any]:
         """Validate SQL query for safety."""
+        import re
         query_upper = query.upper()
 
-        dangerous = [
-            ("DROP", "DROP not allowed"), ("TRUNCATE", "TRUNCATE not allowed"),
-            ("DELETE", "DELETE not allowed"), ("UPDATE", "UPDATE not allowed"),
-            ("INSERT", "INSERT not allowed"), ("ALTER", "ALTER not allowed"),
-            ("CREATE", "CREATE not allowed"), ("GRANT", "GRANT not allowed"),
+        # Check for dangerous SQL commands as whole words (not substrings)
+        # Using word boundary regex to avoid false positives like "created_at" matching "CREATE"
+        dangerous_commands = [
+            ("DROP", "DROP not allowed"),
+            ("TRUNCATE", "TRUNCATE not allowed"),
+            ("DELETE", "DELETE not allowed"),
+            ("UPDATE", "UPDATE not allowed"),
+            ("INSERT", "INSERT not allowed"),
+            ("ALTER", "ALTER not allowed"),
+            ("CREATE", "CREATE not allowed"),
+            ("GRANT", "GRANT not allowed"),
         ]
 
-        for op, reason in dangerous:
-            if op in query_upper:
+        for cmd, reason in dangerous_commands:
+            # Match command as a whole word (word boundary before and after)
+            # This prevents "created_at" from matching "CREATE"
+            pattern = r'\b' + cmd + r'\b'
+            if re.search(pattern, query_upper):
                 return {"safe": False, "reason": reason}
 
         if not query_upper.strip().startswith("SELECT"):
@@ -444,7 +587,7 @@ Provide as JSON:
 
             response = await self.model.generate_content_async(
                 prompt,
-                generation_config={"temperature": 0.3, "max_output_tokens": 512}
+                generation_config={"temperature": 0.3}
             )
 
             text = response.text.strip()

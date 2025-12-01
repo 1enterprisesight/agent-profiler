@@ -99,6 +99,62 @@ from app.database import async_session_factory
 _background_tasks: dict = {}
 
 
+async def _get_conversation_history(
+    db: AsyncSession,
+    conversation_id: str,
+) -> list:
+    """
+    Retrieve full conversation history for context.
+    Returns all messages ordered chronologically.
+    The LLM will decide what's relevant from the history.
+    """
+    try:
+        result = await db.execute(
+            select(ConversationMessage)
+            .where(ConversationMessage.session_id == uuid.UUID(conversation_id))
+            .order_by(ConversationMessage.created_at.asc())
+        )
+        messages = result.scalars().all()
+
+        history = []
+        for msg in messages:
+            history_entry = {
+                "role": msg.role,
+                "content": msg.content,
+                "timestamp": msg.created_at.isoformat() if msg.created_at else None,
+            }
+            # Include result summary if available (for assistant messages)
+            if msg.meta_data:
+                if msg.meta_data.get("workflow_results"):
+                    # Summarize results for context
+                    workflow_results = msg.meta_data.get("workflow_results", [])
+                    history_entry["result_summary"] = [
+                        {
+                            "agent": r.get("agent"),
+                            "success": r.get("success"),
+                            "result_preview": str(r.get("result", {}))[:500]
+                        }
+                        for r in workflow_results
+                    ]
+                if msg.meta_data.get("agents_used"):
+                    history_entry["agents_used"] = msg.meta_data.get("agents_used")
+            history.append(history_entry)
+
+        logger.info(
+            "conversation_history_retrieved",
+            conversation_id=conversation_id,
+            message_count=len(history)
+        )
+        return history
+    except Exception as e:
+        logger.warning(
+            "failed_to_get_conversation_history",
+            conversation_id=conversation_id,
+            error=str(e)
+        )
+        return []
+
+
 async def _process_chat_background(
     conversation_id: str,
     user_id: str,
@@ -117,13 +173,24 @@ async def _process_chat_background(
                 user_id=user_id,
             )
 
+            # Retrieve full conversation history for context
+            # The LLM will decide what's relevant from history
+            conversation_history = await _get_conversation_history(db, conversation_id)
+
+            # Enrich context with conversation history and original query
+            enriched_context = {
+                **context,
+                "conversation_history": conversation_history,
+                "original_user_query": user_message,
+            }
+
             # Orchestrate multi-agent workflow
             orchestrator_message = AgentMessage(
                 agent_type="orchestrator",
                 action="orchestrate",
                 payload={
                     "user_query": user_message,
-                    "context": context,
+                    "context": enriched_context,
                 },
                 conversation_id=conversation_id,
             )
@@ -347,13 +414,24 @@ async def chat(
             message=request.message[:100],
         )
 
+        # Retrieve full conversation history for context
+        # The LLM will decide what's relevant from history
+        conversation_history = await _get_conversation_history(db, conversation_id)
+
+        # Enrich context with conversation history and original query
+        enriched_context = {
+            **(request.context or {}),
+            "conversation_history": conversation_history,
+            "original_user_query": request.message,
+        }
+
         # Orchestrate multi-agent workflow
         orchestrator_message = AgentMessage(
             agent_type="orchestrator",
             action="orchestrate",
             payload={
                 "user_query": request.message,
-                "context": request.context or {},
+                "context": enriched_context,
             },
             conversation_id=conversation_id,
         )

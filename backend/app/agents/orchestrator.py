@@ -363,8 +363,30 @@ class OrchestratorAgent(BaseAgent):
             context["discovery_context"] = discovery_context
             context["typed_schema"] = typed_schema
 
+            # Query Understanding Layer - canonicalize and detect references
+            conversation_history = context.get("conversation_history", [])
+            query_understanding = await self._understand_query(
+                user_query,
+                typed_schema,
+                conversation_history,
+                conversation_id,
+                user_id,
+                db
+            )
+            context["query_understanding"] = query_understanding
+
+            # Use clarified query if references were resolved
+            effective_query = user_query
+            if query_understanding.get("references_previous") and query_understanding.get("clarified_query"):
+                effective_query = query_understanding["clarified_query"]
+                self.logger.info(
+                    "using_clarified_query",
+                    original=user_query,
+                    clarified=effective_query
+                )
+
             plan_response = await self._create_execution_plan(
-                user_query, context, conversation_id, user_id, db
+                effective_query, context, conversation_id, user_id, db
             )
 
             if not plan_response["success"]:
@@ -608,8 +630,13 @@ class OrchestratorAgent(BaseAgent):
                 response=response,
             )
 
-            # Parse execution plan
-            plan = self._parse_plan_response(response)
+            # Parse execution plan (with LLM repair on failure)
+            plan = await self._parse_plan_response(
+                response,
+                conversation_id,
+                user_id,
+                db
+            )
 
             return {
                 "success": True,
@@ -722,10 +749,46 @@ USE THESE THRESHOLDS: When user says 'high value', 'wealthy', 'top clients' - us
 This ensures queries match the user's actual data distribution, not arbitrary values.
 """
 
+        # Build conversation history section - LLM decides relevance
+        history = context.get("conversation_history", [])
+        history_desc = ""
+        if history:
+            history_desc = "\n\nCONVERSATION HISTORY (use to understand context and references):\n"
+            for i, msg in enumerate(history):
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                # Truncate very long messages for the planning prompt
+                content_preview = content[:300] + "..." if len(content) > 300 else content
+                history_desc += f"{i+1}. [{role}]: {content_preview}\n"
+                if msg.get("result_summary"):
+                    # Include brief result summary
+                    summaries = msg["result_summary"][:2]  # First 2 agent results
+                    for s in summaries:
+                        history_desc += f"   → {s.get('agent')}: {s.get('result_preview', '')[:150]}...\n"
+            history_desc += """
+HISTORY USAGE RULES:
+1. If user says "those", "the previous", "from that list" - reference the most recent relevant result
+2. If user asks a follow-up, use context from previous exchanges
+3. For new/unrelated queries, history may not be relevant - use your judgment
+"""
+
+        # Build query understanding context if available
+        query_understanding = context.get("query_understanding", {})
+        understanding_desc = ""
+        if query_understanding:
+            if query_understanding.get("references_previous"):
+                understanding_desc = f"\n\nQUERY ANALYSIS:\n"
+                understanding_desc += f"- Original query references previous results\n"
+                understanding_desc += f"- Clarified intent: {query_understanding.get('clarified_query', 'N/A')}\n"
+                understanding_desc += f"- Relevant fields: {', '.join(query_understanding.get('relevant_fields', []))}\n"
+
         context_str = ""
         if context:
             # Remove internal context from display
-            display_context = {k: v for k, v in context.items() if k not in ["user_data_sources", "discovery_context"]}
+            display_context = {k: v for k, v in context.items()
+                              if k not in ["user_data_sources", "discovery_context",
+                                          "conversation_history", "query_understanding",
+                                          "original_user_query", "typed_schema"]}
             if display_context:
                 context_str = f"\n\nAdditional Context:\n{json.dumps(display_context, indent=2)}"
 
@@ -737,85 +800,45 @@ This ensures queries match the user's actual data distribution, not arbitrary va
 
 Your job is to break down the user's request into a sequential execution plan using available agents.
 
-IMPORTANT: You MUST ONLY use these exact agent names: {valid_agents_str}
-Do NOT invent agent names like "data_explorer" - use only the names listed above.
+CRITICAL CONSTRAINT - READ CAREFULLY:
+The "agent" field MUST be one of these EXACT strings: {valid_agents_str}
 
-AVAILABLE AGENTS (discovered dynamically):
+FORBIDDEN: Do NOT invent new agent names like "natural_language_output", "response_formatter", "output", etc.
+FORBIDDEN: Do NOT use spaces or different capitalization.
+If you need to format output, that happens AFTER the workflow - just use the agents listed above.
+
+AVAILABLE AGENTS:
 {capabilities_desc}
-{schema_desc}{data_source_desc}{thresholds_desc}
-CRITICAL ROUTING RULES:
-1. SQL Analytics Agent:
-   - USE FOR: Math, calculations, aggregations, date operations, exact value filtering
-   - NEVER USE FOR: LIKE queries, regex, fuzzy text matching, semantic search
+{schema_desc}{data_source_desc}{thresholds_desc}{history_desc}{understanding_desc}
+YOUR TASK:
+Analyze the user's query and create a workflow plan using the agents described above.
 
-2. Semantic Search Agent:
-   - USE FOR: Unstructured text search, fuzzy matching, similarity, concepts
-   - NEVER USE FOR: Math, calculations, exact filtering, date operations
-
-3. Each agent is independent and has its own LLM
-4. Agents never call other agents - only YOU coordinate the workflow
-5. Results from each step feed into the next step
-6. The "task" field should be natural language - the agent will interpret it
+PRINCIPLES:
+1. Each agent describes WHEN to use it and WHEN NOT to use it - follow those guidelines
+2. Provide VALUE: Don't just answer literally - consider what insights would help the user
+3. Multi-agent workflows: If data retrieval alone isn't enough, chain agents to add analysis, patterns, or recommendations
+4. Each agent has its own LLM - give it a natural language task description and it will figure out the details
+5. Mark steps as "required": false if they add value but aren't essential to answer the question
 
 User Query: "{user_query}"{context_str}
 
-Create a sequential execution plan. For simple requests (single agent), create a 1-step plan.
-For complex requests, break into multiple steps.
+VALID AGENT NAMES (use ONLY these exact names): {valid_agents_str}
 
-Respond ONLY with valid JSON in this format:
+Respond ONLY with valid JSON:
 {{
   "steps": [
     {{
-      "agent": "agent_name",
+      "agent": "MUST be one of: {valid_agents_str}",
       "task": "Natural language description of what this agent should do",
       "parameters": {{}},
-      "reasoning": "Why this agent and task",
+      "reasoning": "Why this agent for this step",
       "required": true
     }}
   ],
-  "overall_strategy": "Brief description of the overall approach"
+  "overall_strategy": "Brief description of your approach"
 }}
 
-EXAMPLES:
-
-Simple Request:
-User: "How many clients do we have?"
-{{
-  "steps": [
-    {{
-      "agent": "sql_analytics",
-      "task": "Count all clients in the database",
-      "parameters": {{}},
-      "reasoning": "Simple COUNT query on clients table",
-      "required": true
-    }}
-  ],
-  "overall_strategy": "Single SQL query to count clients"
-}}
-
-Multi-Step Request:
-User: "Find high-value clients and segment them by engagement"
-{{
-  "steps": [
-    {{
-      "agent": "sql_analytics",
-      "task": "Find clients with AUM over $500,000",
-      "parameters": {{}},
-      "reasoning": "First identify high-value clients using quantitative filter",
-      "required": true
-    }},
-    {{
-      "agent": "segmentation",
-      "task": "Segment the high-value clients by engagement level",
-      "parameters": {{"client_ids": "from_previous_step"}},
-      "reasoning": "Group the identified clients into engagement segments",
-      "required": true
-    }}
-  ],
-  "overall_strategy": "Find high-value clients with SQL, then segment them"
-}}
-
-Now analyze the user query and create the execution plan:"""
+Create the execution plan:"""
 
         return prompt
 
@@ -860,10 +883,77 @@ Now analyze the user query and create the execution plan:"""
             )
             raise
 
-    def _parse_plan_response(self, response: str) -> Dict[str, Any]:
-        """Parse JSON execution plan from Gemini"""
+    async def _understand_query(
+        self,
+        user_query: str,
+        schema: Dict[str, Any],
+        history: List[Dict[str, Any]],
+        conversation_id: str,
+        user_id: str,
+        db: AsyncSession,
+    ) -> Dict[str, Any]:
+        """
+        Query understanding layer - canonicalizes queries and detects references.
+        The LLM decides what's relevant from conversation history.
+        """
+        # Format history for LLM - let it decide what's relevant
+        history_str = ""
+        if history:
+            history_str = "\n\nCONVERSATION HISTORY:\n"
+            for i, msg in enumerate(history):
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                history_str += f"{i+1}. [{role}]: {content}\n"
+                if msg.get("result_summary"):
+                    history_str += f"   Results: {json.dumps(msg['result_summary'][:2])}...\n"
+
+        # Format schema for LLM
+        schema_fields = []
+        if schema.get("has_schema"):
+            for f in schema.get("numeric_fields", []):
+                schema_fields.append(f["name"])
+            for f in schema.get("text_fields", []):
+                schema_fields.append(f["name"])
+            for f in schema.get("date_fields", []):
+                schema_fields.append(f["name"])
+
+        prompt = f"""Analyze this user query in the context of the conversation.
+
+CURRENT QUERY: "{user_query}"
+
+AVAILABLE DATA FIELDS: {', '.join(schema_fields) if schema_fields else 'Unknown - will be discovered'}
+{history_str}
+
+Your task:
+1. Determine the CANONICAL INTENT - what the user actually wants
+2. Detect if this REFERENCES PREVIOUS results (e.g., "show me more", "filter those", "from the previous list")
+3. Identify which DATA FIELDS are relevant to this query
+4. Create a CLARIFIED QUERY that resolves any references to previous results
+
+Respond with JSON ONLY:
+{{
+    "canonical_intent": "Clear statement of what user wants",
+    "references_previous": true/false,
+    "previous_reference_type": "results|query|none",
+    "relevant_fields": ["field1", "field2"],
+    "clarified_query": "Rewritten query with resolved references",
+    "ambiguities": ["Any unclear aspects that might need clarification"]
+}}"""
+
         try:
-            # Clean response
+            response = await self._call_gemini(prompt)
+
+            # Log the understanding call
+            await self.log_llm_conversation(
+                db=db,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                model_name=settings.gemini_pro_model,
+                prompt=prompt,
+                response=response,
+            )
+
+            # Parse response
             response = response.strip()
             if response.startswith("```json"):
                 response = response[7:]
@@ -871,10 +961,112 @@ Now analyze the user query and create the execution plan:"""
                 response = response[3:]
             if response.endswith("```"):
                 response = response[:-3]
-            response = response.strip()
+
+            understanding = json.loads(response.strip())
+
+            self.logger.info(
+                "query_understood",
+                original=user_query,
+                canonical=understanding.get("canonical_intent"),
+                references_previous=understanding.get("references_previous"),
+                clarified=understanding.get("clarified_query")
+            )
+
+            return understanding
+
+        except Exception as e:
+            self.logger.warning(
+                "query_understanding_failed",
+                error=str(e),
+                user_query=user_query
+            )
+            # Fallback - return basic understanding
+            return {
+                "canonical_intent": user_query,
+                "references_previous": False,
+                "previous_reference_type": "none",
+                "relevant_fields": [],
+                "clarified_query": user_query,
+                "ambiguities": []
+            }
+
+    async def _repair_json_with_llm(
+        self,
+        malformed_json: str,
+        error_message: str,
+        conversation_id: str,
+        user_id: str,
+        db: AsyncSession,
+    ) -> str:
+        """
+        Use LLM to repair malformed JSON. Single retry attempt.
+        """
+        prompt = f"""Fix this malformed JSON. Return ONLY valid JSON, no explanation.
+
+MALFORMED JSON:
+{malformed_json}
+
+PARSE ERROR:
+{error_message}
+
+Return the corrected JSON only:"""
+
+        try:
+            response = await self._call_gemini(prompt)
+
+            # Log the repair attempt
+            await self.log_llm_conversation(
+                db=db,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                model_name=settings.gemini_pro_model,
+                prompt=prompt,
+                response=response,
+            )
+
+            self.logger.info(
+                "json_repair_attempted",
+                original_error=error_message,
+                repair_response_length=len(response)
+            )
+
+            return response.strip()
+
+        except Exception as e:
+            self.logger.error(
+                "json_repair_failed",
+                error=str(e),
+                original_error=error_message
+            )
+            raise
+
+    async def _parse_plan_response(
+        self,
+        response: str,
+        conversation_id: str,
+        user_id: str,
+        db: AsyncSession,
+    ) -> Dict[str, Any]:
+        """Parse JSON execution plan from Gemini with LLM-based repair on failure"""
+        original_response = response
+
+        def clean_json(text: str) -> str:
+            """Clean markdown formatting from JSON response"""
+            text = text.strip()
+            if text.startswith("```json"):
+                text = text[7:]
+            if text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            return text.strip()
+
+        try:
+            # Clean response
+            cleaned = clean_json(response)
 
             # Parse JSON
-            plan = json.loads(response)
+            plan = json.loads(cleaned)
 
             # Validate
             if "steps" not in plan or not isinstance(plan["steps"], list):
@@ -920,12 +1112,60 @@ Now analyze the user query and create the execution plan:"""
             return plan
 
         except json.JSONDecodeError as e:
-            self.logger.error(
-                "failed_to_parse_plan",
+            # Attempt LLM-based repair (single retry)
+            self.logger.warning(
+                "json_parse_failed_attempting_repair",
                 error=str(e),
-                response=response,
+                response_preview=original_response[:200]
             )
-            raise ValueError(f"Failed to parse execution plan: {str(e)}")
+
+            try:
+                repaired = await self._repair_json_with_llm(
+                    original_response,
+                    str(e),
+                    conversation_id,
+                    user_id,
+                    db
+                )
+                cleaned_repair = clean_json(repaired)
+                plan = json.loads(cleaned_repair)
+
+                self.logger.info(
+                    "json_repair_successful",
+                    original_error=str(e)
+                )
+
+                # Still need to validate the repaired plan
+                if "steps" not in plan or not isinstance(plan["steps"], list):
+                    raise ValueError("Repaired plan must contain 'steps' array")
+
+                valid_agents = set(self.agent_registry.keys())
+                for step in plan["steps"]:
+                    if "agent" not in step:
+                        raise ValueError("Step missing required field: agent")
+                    if "task" not in step and "action" not in step:
+                        raise ValueError("Step must have 'task' or 'action' field")
+
+                    raw_agent = step["agent"]
+                    normalized_agent = self._normalize_agent_name(raw_agent)
+                    if normalized_agent not in valid_agents:
+                        raise ValueError(f"Invalid agent '{raw_agent}' in repaired plan")
+                    step["agent"] = normalized_agent
+                    if "task" in step and "action" not in step:
+                        step["action"] = step["task"]
+                    if "parameters" not in step:
+                        step["parameters"] = {}
+
+                return plan
+
+            except Exception as repair_error:
+                self.logger.error(
+                    "json_repair_also_failed",
+                    original_error=str(e),
+                    repair_error=str(repair_error),
+                    response=original_response,
+                )
+                raise ValueError(f"Failed to parse execution plan (repair also failed): {str(e)}")
 
     async def _execute_step(
         self,
@@ -936,7 +1176,8 @@ Now analyze the user query and create the execution plan:"""
         db: AsyncSession,
     ) -> Dict[str, Any]:
         """
-        Execute a single workflow step by calling the appropriate agent
+        Execute a single workflow step by calling the appropriate agent.
+        Passes original query, schema, and history so agent's LLM has full context.
         """
         raw_agent_name = step["agent"]
         agent_name = self._normalize_agent_name(raw_agent_name)
@@ -961,11 +1202,28 @@ Now analyze the user query and create the execution plan:"""
                     "error": f"Agent '{agent_name}' not found. Available: {', '.join(available)}"
                 }
 
-            # Create agent message
+            # Enrich payload with context for sub-agent's LLM
+            # This allows each agent to understand the full conversation context
+            # INCLUDING results from previous workflow steps
+            previous_step_results = {
+                k: v for k, v in context.items()
+                if k.startswith("step_") and k.endswith("_result")
+            }
+
+            enriched_payload = {
+                **parameters,
+                "original_user_query": context.get("original_user_query", ""),
+                "schema_context": context.get("typed_schema", {}),
+                "conversation_history": context.get("conversation_history", []),
+                "query_understanding": context.get("query_understanding", {}),
+                "previous_step_results": previous_step_results,
+            }
+
+            # Create agent message with enriched payload
             agent_message = AgentMessage(
                 agent_type=agent_name,
                 action=action,
-                payload=parameters,
+                payload=enriched_payload,
                 conversation_id=conversation_id,
             )
 

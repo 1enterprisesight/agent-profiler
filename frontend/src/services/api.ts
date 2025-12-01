@@ -97,14 +97,20 @@ export const chatApi = {
     conversationId: string,
     onEvent: (event: TransparencyEvent) => void,
     onComplete: (data: CompleteEvent) => void,
-    onError: (error: string) => void
+    onError: (error: string) => void,
+    messageId?: string
   ): EventSource => {
     const token = localStorage.getItem('auth_token');
     const url = `${API_BASE_URL}/stream/events/${conversationId}`;
 
     // Note: EventSource doesn't support custom headers, so we pass token as query param
     // Backend should support both header and query param auth for SSE
-    const eventSource = new EventSource(`${url}?token=${token}`);
+    // Pass message_id to track specific query in multi-query conversations
+    const params = new URLSearchParams({ token: token || '' });
+    if (messageId) {
+      params.append('message_id', messageId);
+    }
+    const eventSource = new EventSource(`${url}?${params.toString()}`);
 
     eventSource.addEventListener('event', (e: MessageEvent) => {
       try {

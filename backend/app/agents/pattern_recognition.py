@@ -158,16 +158,78 @@ Respond JSON: {{"capability": "name", "parameters": {{}}}}"""
             return await self._find_correlations(conversation_id, user_id, params, db)
         return await self._identify_patterns(conversation_id, user_id, params, db)
 
+    async def _select_correlation_fields_with_llm(self, query: str, available_fields: list) -> list:
+        """Use LLM to select the most interesting fields to correlate."""
+        try:
+            prompt = f"""Given this user query and available numeric fields, select 2 fields that would be most interesting to find correlations between.
+
+User Query: "{query}"
+Available Fields: {', '.join(available_fields)}
+
+Return ONLY two field names separated by comma (e.g., "field1, field2")."""
+
+            response = await self.model.generate_content_async(
+                prompt,
+                generation_config={"temperature": 0.1}
+            )
+            selected = [f.strip().lower().replace('"', '').replace("'", "") for f in response.text.split(",")]
+            # Validate they're in available fields
+            valid_fields = []
+            for s in selected[:2]:
+                for field in available_fields:
+                    if field.lower() == s or s in field.lower():
+                        valid_fields.append(field)
+                        break
+            return valid_fields if len(valid_fields) >= 2 else available_fields[:2]
+        except Exception as e:
+            self.logger.warning("correlation_field_selection_failed", error=str(e))
+            return available_fields[:2] if len(available_fields) >= 2 else []
+
+    async def _select_field_with_llm(self, query: str, available_fields: list, purpose: str) -> str:
+        """Use LLM to select the most appropriate field for analysis."""
+        try:
+            prompt = f"""Given this user query and available fields, select the most appropriate field for {purpose}.
+
+User Query: "{query}"
+Available Fields: {', '.join(available_fields)}
+
+Return ONLY the field name (one of the available fields). If unsure, pick the most commonly useful one."""
+
+            response = await self.model.generate_content_async(
+                prompt,
+                generation_config={"temperature": 0.1}
+            )
+            selected = response.text.strip().lower().replace('"', '').replace("'", "")
+            # Validate it's in available fields
+            if selected in [f.lower() for f in available_fields]:
+                return selected
+            # Try to find a match
+            for field in available_fields:
+                if field.lower() in selected or selected in field.lower():
+                    return field
+            return available_fields[0] if available_fields else None
+        except Exception as e:
+            self.logger.warning("field_selection_failed", error=str(e))
+            return available_fields[0] if available_fields else None
+
     async def _analyze_trends(self, conversation_id: str, user_id: str, payload: Dict, db: AsyncSession):
         """Analyze trends in data over time."""
         return {"trends": [], "message": "Trend analysis - sample implementation", "data_points": 0}
 
     async def _detect_anomalies(self, conversation_id: str, user_id: str, payload: Dict, db: AsyncSession):
         """Detect anomalies in data."""
-        field = payload.get("field", "aum")
-        allowed = ['aum', 'engagement_score', 'risk_score', 'age', 'account_value']
-        if field not in allowed:
-            field = 'aum'
+        field = payload.get("field")
+        if not field:
+            # Check schema context for available numeric fields
+            schema_context = payload.get("schema_context", {})
+            numeric_fields = schema_context.get("numeric_fields", [])
+            if numeric_fields:
+                # Let LLM choose the most relevant field based on query and available fields
+                original_query = payload.get("original_user_query", "")
+                field = await self._select_field_with_llm(original_query, numeric_fields, "anomaly detection")
+            if not field:
+                self.logger.warning("no_numeric_fields_available")
+                return {"anomalies": [], "message": "No numeric fields available for anomaly detection"}
 
         query = f"""
         SELECT id, client_name, (core_data->>'{field}')::numeric as value, core_data
@@ -198,7 +260,18 @@ Return JSON: [{{"type": "outlier", "description": "...", "severity": "high/mediu
 
     async def _find_correlations(self, conversation_id: str, user_id: str, payload: Dict, db: AsyncSession):
         """Find correlations between variables."""
-        fields = payload.get("fields", ["aum", "engagement_score"])
+        fields = payload.get("fields")
+        if not fields:
+            # Use numeric fields from schema context if available
+            schema_context = payload.get("schema_context", {})
+            numeric_fields = schema_context.get("numeric_fields", [])
+            if len(numeric_fields) >= 2:
+                # Let LLM select the most interesting fields to correlate
+                original_query = payload.get("original_user_query", "")
+                fields = await self._select_correlation_fields_with_llm(original_query, numeric_fields)
+            if not fields or len(fields) < 2:
+                self.logger.warning("insufficient_fields_for_correlation", available=numeric_fields)
+                return {"fields": [], "correlations": [], "message": "Need at least 2 numeric fields for correlation"}
         return {"fields": fields, "correlations": [], "sample_size": 0}
 
     async def _identify_patterns(self, conversation_id: str, user_id: str, payload: Dict, db: AsyncSession):

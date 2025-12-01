@@ -24,6 +24,7 @@ async def get_schema_context(db: AsyncSession, user_id: str) -> Dict[str, Any]:
 
     NO HARDCODING - queries the clients table to discover all fields
     in custom_data and core_data JSONB columns, then infers their types.
+    Also includes base columns from the clients table.
 
     Returns:
         dict with:
@@ -42,6 +43,20 @@ async def get_schema_context(db: AsyncSession, user_id: str) -> Dict[str, Any]:
         "all_fields": {},
         "has_schema": False
     }
+
+    # Include base columns from clients table
+    base_columns = [
+        {"name": "client_name", "type": "text", "location": "base", "access_path": "client_name"},
+        {"name": "contact_email", "type": "text", "location": "base", "access_path": "contact_email"},
+        {"name": "company_name", "type": "text", "location": "base", "access_path": "company_name"},
+        {"name": "source_type", "type": "text", "location": "base", "access_path": "source_type"},
+        {"name": "created_at", "type": "date", "location": "base", "access_path": "created_at"},
+        {"name": "synced_at", "type": "date", "location": "base", "access_path": "synced_at"},
+    ]
+
+    for col in base_columns:
+        schema["all_fields"][col["name"]] = col
+        _categorize_field(schema, col)
 
     # Discover all custom_data fields
     custom_fields_query = text("""
