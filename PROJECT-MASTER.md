@@ -274,7 +274,7 @@ backend/app/agents/
 | 3 | 2025-12-02 | data_ingestion architecture design | DONE | Removed all violations, added type detection |
 | 4 | 2025-12-02 | data_ingestion implementation | DONE | See details below |
 | 5 | 2025-12-02 | AgentRegistry + @register_agent | DONE | Dynamic discovery pattern |
-| 6 | 2025-12-02 | data_ingestion deployment | IN PROGRESS | |
+| 6 | 2025-12-02 | data_ingestion deployment | DONE | v2.1.0 deployed |
 | 7 | | data_discovery architecture design | PENDING | |
 | 8 | | data_discovery implementation | PENDING | |
 | 9 | | data_discovery testing | PENDING | |
