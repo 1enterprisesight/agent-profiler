@@ -246,46 +246,58 @@ Respond JSON: {{"capability": "name", "parameters": {{}}}}"""
         Returns type info for proper JSONB storage.
 
         IMPORTANT: All values must be Python native types (not numpy) for JSON serialization.
+
+        Option C approach: Clean at ingestion
+        - Empty strings/whitespace are filtered before type detection
+        - If ALL real values are numeric, column is numeric
+        - Empty strings become NULL in storage
         """
         detected_types = {}
 
         for col in df.columns:
+            # Step 1: Remove nulls AND empty strings/whitespace
             col_data = df[col].dropna()
+            col_data = col_data[col_data.astype(str).str.strip() != '']
+
             if col_data.empty:
                 detected_types[col] = {"type": "text", "nullable": True}
                 continue
 
-            # Convert numpy.bool_ to Python bool
-            nullable = bool(df[col].isna().any())
-            sample_values = col_data.head(5).tolist()
+            # Check if column has nulls OR empty strings (both become NULL in storage)
+            has_nulls = bool(df[col].isna().any())
+            has_empty = bool((df[col].fillna('').astype(str).str.strip() == '').any())
+            nullable = has_nulls or has_empty
 
-            # Try numeric detection
+            # Try numeric detection - ALL real values must be numeric
             try:
                 numeric_col = pd.to_numeric(col_data, errors='raise')
+                sample_values = numeric_col.head(3).tolist()
+
                 # Check if integer or float
                 if (numeric_col == numeric_col.astype(int)).all():
                     detected_types[col] = {
                         "type": "int",
                         "nullable": nullable,
-                        "sample_values": [int(v) for v in sample_values[:3]]
+                        "sample_values": [int(v) for v in sample_values]
                     }
                 else:
                     detected_types[col] = {
                         "type": "float",
                         "nullable": nullable,
-                        "sample_values": [float(v) for v in sample_values[:3]]
+                        "sample_values": [float(v) for v in sample_values]
                     }
                 continue
             except (ValueError, TypeError):
                 pass
 
-            # Try date detection
+            # Try date detection - ALL real values must parse as dates
             try:
-                pd.to_datetime(col_data, errors='raise', infer_datetime_format=True)
+                date_col = pd.to_datetime(col_data, errors='raise')
+                sample_dates = date_col.head(3).tolist()
                 detected_types[col] = {
                     "type": "date",
                     "nullable": nullable,
-                    "sample_values": [str(v) for v in sample_values[:3]]
+                    "sample_values": [str(v) for v in sample_dates]
                 }
                 continue
             except (ValueError, TypeError):
@@ -293,27 +305,37 @@ Respond JSON: {{"capability": "name", "parameters": {{}}}}"""
 
             # Try boolean detection
             bool_values = {'true', 'false', 'yes', 'no', '1', '0', 't', 'f', 'y', 'n'}
-            str_values = col_data.astype(str).str.lower().unique()
-            if set(str_values).issubset(bool_values):
+            str_values = set(col_data.astype(str).str.lower().str.strip().unique())
+            if str_values.issubset(bool_values) and len(str_values) > 0:
+                sample_vals = col_data.head(3).tolist()
                 detected_types[col] = {
                     "type": "bool",
                     "nullable": nullable,
-                    "sample_values": [str(v) for v in sample_values[:3]]
+                    "sample_values": [str(v) for v in sample_vals]
                 }
                 continue
 
             # Default to text
+            sample_vals = col_data.head(3).tolist()
             detected_types[col] = {
                 "type": "text",
                 "nullable": nullable,
-                "sample_values": [str(v) for v in sample_values[:3]]
+                "sample_values": [str(v) for v in sample_vals]
             }
 
         return detected_types
 
     def _cast_value(self, value: Any, detected_type: str) -> Any:
-        """Cast value to detected type for proper JSONB storage."""
+        """Cast value to detected type for proper JSONB storage.
+
+        Option C: Empty strings become NULL in JSONB for clean SQL queries.
+        """
+        # Null or NaN → None
         if pd.isna(value) or value is None:
+            return None
+
+        # Empty string or whitespace → None (clean data for SQL)
+        if isinstance(value, str) and value.strip() == '':
             return None
 
         if detected_type == "int":
