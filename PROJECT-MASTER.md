@@ -229,324 +229,79 @@ gcloud container images list-tags gcr.io/client-profiler-473903/agent-profiler-f
 
 ---
 
-## PROJECT STRUCTURE (After Baseline Reset)
+## CURRENT BASELINE STATE
 
+**Baseline Tag:** `v2.0.0-baseline`
+**Date Reset:** 2025-12-02
+
+### Files in baseline:
 ```
-agent-profiler/
-├── backend/
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── main.py              # FastAPI entry (KEEP - needs cleanup)
-│   │   ├── config.py            # Configuration (KEEP)
-│   │   ├── auth.py              # Authentication logic (KEEP)
-│   │   ├── database.py          # DB connection (KEEP)
-│   │   ├── models.py            # SQLAlchemy models (KEEP)
-│   │   ├── routers/
-│   │   │   ├── __init__.py      # (KEEP)
-│   │   │   ├── auth.py          # OAuth endpoint (KEEP)
-│   │   │   └── uploads.py       # Upload endpoint (KEEP)
-│   │   └── agents/
-│   │       ├── __init__.py      # (KEEP - needs cleanup)
-│   │       ├── base.py          # BaseAgent class (KEEP)
-│   │       ├── data_ingestion.py # CSV processing (KEEP)
-│   │       └── data_discovery.py # Metadata computation (KEEP)
-│   ├── Dockerfile               # (KEEP)
-│   └── requirements.txt         # (KEEP)
-├── frontend/
-│   ├── src/
-│   │   ├── main.tsx             # React entry (KEEP)
-│   │   ├── App.tsx              # Main app (KEEP - needs cleanup)
-│   │   ├── contexts/
-│   │   │   └── AuthContext.tsx  # Auth state (KEEP)
-│   │   ├── services/
-│   │   │   └── api.ts           # API client (KEEP - needs cleanup)
-│   │   ├── types/
-│   │   │   └── index.ts         # TypeScript types (KEEP - needs cleanup)
-│   │   └── components/
-│   │       ├── LoginButton.tsx      # (KEEP)
-│   │       ├── DataUpload.tsx       # (KEEP)
-│   │       ├── DataSourceList.tsx   # (KEEP)
-│   │       ├── DataSourceBadge.tsx  # (KEEP)
-│   │       └── ErrorBoundary.tsx    # (KEEP)
-│   ├── Dockerfile               # (KEEP)
-│   ├── package.json             # (KEEP)
-│   └── .env                     # (KEEP)
-├── database/
-│   └── schema.sql               # (KEEP - no changes)
-├── cloudbuild.yaml              # (KEEP)
-└── PROJECT-MASTER.md            # (THIS DOCUMENT)
+backend/app/agents/
+├── __init__.py
+├── base.py              # BaseAgent class
+├── data_ingestion.py    # CSV processing (NEEDS REWRITE)
+├── data_discovery.py    # Metadata computation (NEEDS REWRITE)
+└── schema_utils.py      # Schema discovery utilities
 ```
 
----
-
-## FILES TO DELETE
-
-### Backend Agents (7 files)
-```
-backend/app/agents/orchestrator.py       # Multi-agent coordinator - broken
-backend/app/agents/sql_analytics.py      # SQL agent - agent chaining issues
-backend/app/agents/semantic_search.py    # Semantic search agent
-backend/app/agents/segmentation.py       # Segmentation - hardcoded phrases
-backend/app/agents/pattern_recognition.py # Pattern recognition agent
-backend/app/agents/recommendation.py     # Recommendation agent
-backend/app/agents/benchmark.py          # Benchmarking agent
-```
-
-### Backend Routers (2 files)
-```
-backend/app/routers/conversations.py     # 600+ lines chat handling
-backend/app/routers/streaming.py         # WebSocket streaming
-```
-
-### Frontend Components (5 files)
-```
-frontend/src/components/ChatInterface.tsx    # 400+ lines chat UI
-frontend/src/components/AgentNetwork.tsx     # 400+ lines agent visualization
-frontend/src/components/WorkflowDisplay.tsx  # 400+ lines workflow UI
-frontend/src/components/CrossSourceView.tsx  # Data analysis visualization
-frontend/src/components/DataSourceManager.tsx # Advanced data management
-```
-
-### Old Documentation to Remove (4 files)
-```
-/Users/michaelreed/es-code/profile-app/NEW-APP-QUICKSTART.md           # Outdated
-/Users/michaelreed/es-code/profile-app/CRM_INTEGRATION_GUIDE.md        # Not needed for baseline
-/Users/michaelreed/es-code/profile-app/agent-profiler/CLAUDE.md        # Replace with PROJECT-MASTER.md
-/Users/michaelreed/es-code/profile-app/agent-profiler/database/README.md # Redundant, info in PROJECT-MASTER.md
-```
-
----
-
-## EXECUTION PLAN (Step-by-Step with Approval)
-
-### PHASE 1: Create Master Document
-**Step 1.1:** Create `/Users/michaelreed/es-code/profile-app/agent-profiler/PROJECT-MASTER.md`
-- Copy this plan content to project directory
-- This becomes the single source of truth
-- **APPROVAL REQUIRED** before proceeding
-
-### PHASE 2: Clean Up Old Documentation
-**Step 2.1:** Delete old .md files (after backup review)
-- `/Users/michaelreed/es-code/profile-app/NEW-APP-QUICKSTART.md`
-- `/Users/michaelreed/es-code/profile-app/CRM_INTEGRATION_GUIDE.md`
-- `/Users/michaelreed/es-code/profile-app/agent-profiler/CLAUDE.md`
-- **APPROVAL REQUIRED** before proceeding
-
-### PHASE 3: Delete Backend Agent Files
-**Step 3.1:** Delete agent files one by one
-```bash
-rm backend/app/agents/orchestrator.py
-# Show result, ask for approval to continue
-
-rm backend/app/agents/sql_analytics.py
-# Show result, ask for approval to continue
-
-rm backend/app/agents/semantic_search.py
-# Show result, ask for approval to continue
-
-rm backend/app/agents/segmentation.py
-# Show result, ask for approval to continue
-
-rm backend/app/agents/pattern_recognition.py
-# Show result, ask for approval to continue
-
-rm backend/app/agents/recommendation.py
-# Show result, ask for approval to continue
-
-rm backend/app/agents/benchmark.py
-# Show result, ask for approval to continue
-```
-- **APPROVAL REQUIRED** before each deletion
-
-### PHASE 4: Delete Backend Router Files
-**Step 4.1:** Delete router files
-```bash
-rm backend/app/routers/conversations.py
-# Show result, ask for approval
-
-rm backend/app/routers/streaming.py
-# Show result, ask for approval
-```
-- **APPROVAL REQUIRED** before each deletion
-
-### PHASE 5: Update Backend main.py
-**Step 5.1:** Show current imports and router includes
-**Step 5.2:** Show proposed changes (remove deleted imports/routers)
-**Step 5.3:** Apply changes after approval
-- **APPROVAL REQUIRED** before making changes
-
-### PHASE 6: Update Backend agents/__init__.py
-**Step 6.1:** Show current exports
-**Step 6.2:** Show proposed changes (keep only BaseAgent, DataIngestionAgent, DataDiscoveryAgent)
-**Step 6.3:** Apply changes after approval
-- **APPROVAL REQUIRED** before making changes
-
-### PHASE 7: Delete Frontend Component Files
-**Step 7.1:** Delete component files one by one
-```bash
-rm frontend/src/components/ChatInterface.tsx
-rm frontend/src/components/AgentNetwork.tsx
-rm frontend/src/components/WorkflowDisplay.tsx
-rm frontend/src/components/CrossSourceView.tsx
-rm frontend/src/components/DataSourceManager.tsx
-```
-- **APPROVAL REQUIRED** before each deletion
-
-### PHASE 8: Update Frontend App.tsx
-**Step 8.1:** Show current imports and component usage
-**Step 8.2:** Show proposed simplified layout (Login + Upload + DataSourceList only)
-**Step 8.3:** Apply changes after approval
-- **APPROVAL REQUIRED** before making changes
-
-### PHASE 9: Update Frontend api.ts
-**Step 9.1:** Show current API methods
-**Step 9.2:** Show proposed changes (remove chat/conversation methods)
-**Step 9.3:** Apply changes after approval
-- **APPROVAL REQUIRED** before making changes
-
-### PHASE 10: Update Frontend types/index.ts
-**Step 10.1:** Show current types
-**Step 10.2:** Show proposed changes (remove chat/conversation types)
-**Step 10.3:** Apply changes after approval
-- **APPROVAL REQUIRED** before making changes
-
-### PHASE 11: Verify Build
-**Step 11.1:** Test backend starts (Python)
-```bash
-cd backend && python -c "from app.main import app; print('Backend OK')"
-```
-**Step 11.2:** Test frontend builds
-```bash
-cd frontend && npm run build
-```
-- **APPROVAL REQUIRED** before proceeding to commit
-
-### PHASE 12: Commit Clean Baseline
-**Step 12.1:** Show git status
-**Step 12.2:** Show proposed commit message
-**Step 12.3:** Commit after approval
-```bash
-git add .
-git commit -m "refactor: Strip to clean baseline - auth, upload, data processing only
-
-Removed:
-- All conversation/chat agents (orchestrator, sql_analytics, segmentation, etc.)
-- All chat routers (conversations, streaming)
-- All chat UI components (ChatInterface, AgentNetwork, WorkflowDisplay, etc.)
-
-Kept:
+### Baseline Functionality:
 - Google Workspace authentication
-- CSV upload and GCS storage
-- Data ingestion with LLM schema analysis
-- Data source listing and metadata
-
-This establishes a clean baseline for rebuilding the multi-agent system.
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
-```
-- **APPROVAL REQUIRED** before commit
-
-### PHASE 13: Push to GitHub
-```bash
-git push origin main
-```
-- **APPROVAL REQUIRED** before push
-
-### PHASE 14: Deploy Backend to Cloud Run
-**Step 14.1:** Build image
-```bash
-cd backend
-gcloud builds submit --tag gcr.io/client-profiler-473903/agent-profiler-api:v2.0.0-baseline --project=client-profiler-473903
-```
-**Step 14.2:** Deploy
-```bash
-gcloud run deploy agent-profiler-api \
-  --image gcr.io/client-profiler-473903/agent-profiler-api:v2.0.0-baseline \
-  --region us-central1 \
-  --platform managed \
-  --project client-profiler-473903
-```
-- **APPROVAL REQUIRED** before deployment
-
-### PHASE 15: Deploy Frontend to Cloud Run
-**Step 15.1:** Build frontend
-```bash
-cd frontend && npm run build
-```
-**Step 15.2:** Build image
-```bash
-gcloud builds submit --tag gcr.io/client-profiler-473903/agent-profiler-frontend:v2.0.0-baseline --project=client-profiler-473903
-```
-**Step 15.3:** Deploy
-```bash
-gcloud run deploy agent-profiler-frontend \
-  --image gcr.io/client-profiler-473903/agent-profiler-frontend:v2.0.0-baseline \
-  --region us-central1 \
-  --platform managed \
-  --allow-unauthenticated \
-  --port 8080 \
-  --project client-profiler-473903
-```
-- **APPROVAL REQUIRED** before deployment
-
-### PHASE 16: Verify Deployment
-**Step 16.1:** Test login at frontend URL
-**Step 16.2:** Test CSV upload
-**Step 16.3:** Verify data sources display
-**Step 16.4:** Check logs for errors
-```bash
-gcloud run logs read agent-profiler-api --project=client-profiler-473903 --limit=20
-```
+- CSV upload to GCS
+- Basic data ingestion
+- Data source listing
 
 ---
 
-## BASELINE FUNCTIONALITY (After Reset)
+## REWRITE SESSION LOG
 
-After completing all phases, the application will have ONLY:
+### Session Started: 2025-12-02
 
-1. **Google Workspace Login**
-   - OAuth sign-in with @enterprisesight.com domain
-   - JWT token-based session management
-   - User isolation (user_id on all queries)
+**Approach:** Architecture-first design. Agree on design, then implement, then test.
 
-2. **CSV Upload**
-   - File validation and upload to GCS
-   - LLM-driven schema analysis (Gemini Flash)
-   - Automatic field mapping to standard/custom fields
-   - DataSource record creation
-   - Client records creation
-
-3. **Data Source Display**
-   - List of uploaded data sources
-   - Record counts
-   - Upload timestamps
-   - Delete functionality
-
-4. **Metadata Computation**
-   - Field completeness percentages
-   - Source aggregation
-   - Stored for future use
-
-**NOT INCLUDED (Will be rebuilt in future session):**
-- Chat/conversation interface
-- Multi-agent orchestration
-- SQL analytics
-- Segmentation
-- Benchmarking
-- Any agent visualization
+**Order of work:**
+1. data_ingestion agent
+2. data_discovery agent
+3. (future agents TBD)
 
 ---
 
-## NEXT SESSION SCOPE
+### LOG ENTRIES
 
-After baseline is established, a separate session will:
+| # | Date | Action | Status | Notes |
+|---|------|--------|--------|-------|
+| 1 | 2025-12-02 | Reverted to v2.0.0-baseline | DONE | Clean slate established |
+| 2 | 2025-12-02 | Cleaned up PROJECT-MASTER.md | DONE | Removed old execution plan |
+| 3 | | data_ingestion architecture design | PENDING | |
+| 4 | | data_ingestion implementation | PENDING | |
+| 5 | | data_ingestion testing | PENDING | |
+| 6 | | data_discovery architecture design | PENDING | |
+| 7 | | data_discovery implementation | PENDING | |
+| 8 | | data_discovery testing | PENDING | |
 
-1. Design proper multi-agent architecture from scratch
-2. Build LLM-driven routing (NO hardcoding)
-3. Implement clean orchestrator
-4. Add agents one at a time with proper testing
-5. Build new chat UI
+---
 
-This is OUT OF SCOPE for the current baseline reset session.
+## ARCHITECTURE PRINCIPLES (Reference)
+
+From CLAUDE.md (preserved for reference):
+
+### NO HARDCODING - THE #1 RULE
+
+- **NO hardcoded routing rules** - Don't add `if "segment" in query: use_agent("segmentation")`
+- **NO hardcoded examples in prompts** - Don't add specific phrases agents handle
+- **NO keyword-based routing** - Don't match specific phrases to specific agents
+- **NO predetermined agent sequences** - Don't assume specific agent order
+- **NO agent cross-awareness** - Agents don't know about or route to other agents
+
+### What to do instead:
+
+- **Agents describe CAPABILITIES** (what they can do), not specific queries they handle
+- **Orchestrator's LLM decides** routing based on agent descriptions + user query
+- **Trust the LLMs** to interpret intent and make routing decisions
+- **Keep agent descriptions general** - describe the type of work, not specific phrases
+
+### Agent Responsibilities:
+
+- Each agent does **ONE thing well**
+- Agent is **NOT responsible for solving the user query** - only for doing its specific job
+- Agent **does NOT know about other agents** or try to route to them
+- Agent returns results to orchestrator, which decides next steps
