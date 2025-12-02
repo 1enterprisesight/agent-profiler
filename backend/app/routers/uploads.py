@@ -18,13 +18,15 @@ from app.auth import get_current_user, User
 from app.config import settings
 from app.agents.base import AgentMessage
 from app.agents.data_ingestion import DataIngestionAgent
+from app.agents.data_discovery import DataDiscoveryAgent
 
 
 logger = structlog.get_logger()
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 
-# Initialize agent
+# Initialize agents
 data_ingestion = DataIngestionAgent()
+data_discovery = DataDiscoveryAgent()
 
 # Initialize storage client
 storage_client = storage.Client(project=settings.google_cloud_project)
@@ -121,12 +123,49 @@ async def upload_csv(
                 filename=file.filename,
             )
 
+            # Chain: Trigger Discovery Agent to add semantic understanding
+            # This is endpoint orchestration, not agent cross-awareness
+            discovery_result = None
+            if response.result.get("requires_metadata_refresh"):
+                data_source_id = response.result.get("data_source_id")
+                logger.info(
+                    "triggering_discovery_agent",
+                    data_source_id=data_source_id,
+                )
+
+                discovery_message = AgentMessage(
+                    agent_type="data_discovery",
+                    action="analyze",
+                    payload={
+                        "data_source_id": data_source_id,
+                    },
+                    conversation_id=conversation_id,
+                )
+
+                discovery_response = await data_discovery.execute(
+                    discovery_message, db, user_id
+                )
+
+                if discovery_response.is_success:
+                    discovery_result = discovery_response.result.get("semantic_profile")
+                    logger.info(
+                        "discovery_agent_completed",
+                        entity_type=discovery_result.get("entity_type") if discovery_result else None,
+                        domain=discovery_result.get("domain") if discovery_result else None,
+                    )
+                else:
+                    logger.warning(
+                        "discovery_agent_failed",
+                        error=discovery_response.error,
+                    )
+
             return {
                 "status": "success",
                 "message": "CSV file uploaded and processed successfully",
                 "file_name": file.filename,
                 "gcs_path": gcs_path,
                 "result": response.result,
+                "semantic_profile": discovery_result,
             }
 
         finally:
