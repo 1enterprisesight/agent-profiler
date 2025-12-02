@@ -1,17 +1,20 @@
 """
-Base Agent Framework - Phase D: Self-Describing Agents
-Provides abstract base class for all agents with:
-- Self-description (get_agent_info, get_capabilities)
-- Complete transparency logging (emit_event)
-- LLM-driven task interpretation (no hardcoded action routing)
+Base Agent Framework - Self-Describing Agents with Dynamic Registry
+
+Provides:
+- AgentRegistry: Singleton for dynamic agent discovery (NO hardcoded routing)
+- @register_agent: Decorator for auto-registration
+- BaseAgent: Abstract base class with transparency logging
+- LLM-driven task interpretation (orchestrator decides routing)
 """
 
 import uuid
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List, Callable
+from typing import Dict, Any, Optional, List, Callable, Type
 from datetime import datetime
 from enum import Enum
+from functools import wraps
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +24,97 @@ from app.config import settings
 
 
 logger = structlog.get_logger()
+
+
+# =============================================================================
+# AGENT REGISTRY - Dynamic Discovery Pattern
+# =============================================================================
+
+class AgentRegistry:
+    """
+    Singleton registry for dynamic agent discovery.
+
+    Agents register themselves via @register_agent decorator.
+    Orchestrator queries registry to get available agents and their capabilities,
+    then uses LLM to decide routing (NO keyword matching, NO hardcoded rules).
+
+    Usage:
+        # Get all registered agents
+        registry = AgentRegistry()
+        agents = registry.get_all_agents()
+
+        # Get schema for LLM prompt injection
+        schema = registry.get_registry_schema()
+
+        # Get specific agent class
+        agent_cls = registry.get_agent("data_ingestion")
+    """
+
+    _instance = None
+    _registry: Dict[str, Type["BaseAgent"]] = {}
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    @classmethod
+    def register(cls, agent_class: Type["BaseAgent"]) -> Type["BaseAgent"]:
+        """Register an agent class. Called by @register_agent decorator."""
+        info = agent_class.get_agent_info()
+        name = info.get("name", agent_class.__name__.lower())
+        cls._registry[name] = agent_class
+        logger.info("agent_registered", agent_name=name)
+        return agent_class
+
+    @classmethod
+    def get_agent(cls, name: str) -> Optional[Type["BaseAgent"]]:
+        """Get an agent class by name."""
+        return cls._registry.get(name)
+
+    @classmethod
+    def get_all_agents(cls) -> Dict[str, Type["BaseAgent"]]:
+        """Get all registered agent classes."""
+        return cls._registry.copy()
+
+    @classmethod
+    def get_registry_schema(cls) -> List[Dict[str, Any]]:
+        """
+        Get schema of all registered agents for LLM prompt injection.
+
+        Returns list of agent metadata that orchestrator injects into
+        its system prompt so LLM can semantically route queries.
+
+        NO keywords, NO example phrases - just capability descriptions.
+        """
+        schema = []
+        for name, agent_cls in cls._registry.items():
+            info = agent_cls.get_agent_info()
+            schema.append({
+                "name": name,
+                "description": info.get("description", ""),
+                "capabilities": info.get("capabilities", []),
+                "inputs": info.get("inputs", {}),
+                "outputs": info.get("outputs", {}),
+            })
+        return schema
+
+    @classmethod
+    def clear(cls):
+        """Clear registry (useful for testing)."""
+        cls._registry = {}
+
+
+def register_agent(cls: Type["BaseAgent"]) -> Type["BaseAgent"]:
+    """
+    Decorator to register an agent class with the registry.
+
+    Usage:
+        @register_agent
+        class MyAgent(BaseAgent):
+            ...
+    """
+    return AgentRegistry.register(cls)
 
 
 class EventType(str, Enum):
@@ -130,7 +224,7 @@ class BaseAgent(ABC):
         # Allow getting name from get_agent_info() if not provided
         info = self.get_agent_info()
         self.name = name or info.get("name", self.__class__.__name__.lower())
-        self.description = description or info.get("purpose", "")
+        self.description = description or info.get("description", "")
         self.logger = structlog.get_logger().bind(agent=self.name)
 
     @classmethod
@@ -139,44 +233,23 @@ class BaseAgent(ABC):
         """
         Agent describes itself for dynamic discovery by orchestrator.
 
-        Returns:
-            {
-                "name": "segmentation",
-                "purpose": "Group clients into meaningful cohorts",
-                "when_to_use": [
-                    "User wants to group or cluster clients",
-                    "User asks about segments, cohorts, or personas",
-                ],
-                "when_not_to_use": [
-                    "User needs numerical calculations",
-                    "User is searching for specific text",
-                ],
-                "example_tasks": [
-                    "Segment my clients by engagement level",
-                    "Find clients similar to my top performers",
-                ],
-                "data_source_aware": True,  # Optional: can handle multi-source queries
-            }
-        """
-        pass
-
-    @abstractmethod
-    def get_capabilities(self) -> Dict[str, Dict[str, Any]]:
-        """
-        Agent's internal capabilities for LLM-driven task routing.
+        IMPORTANT: NO hardcoded keywords, NO example phrases, NO routing hints.
+        The orchestrator's LLM uses these descriptions for semantic routing.
 
         Returns:
             {
-                "cluster_clients": {
-                    "description": "Group clients into segments based on attributes",
-                    "examples": ["segment by", "group clients", "create clusters"],
-                    "method": "_cluster_clients"  # Method name to call
+                "name": "agent_name",
+                "description": "What this agent does (generic, capability-focused)",
+                "capabilities": [
+                    "First capability description",
+                    "Second capability description",
+                ],
+                "inputs": {
+                    "param_name": "Description of expected input"
                 },
-                "find_similar": {
-                    "description": "Find clients similar to a reference",
-                    "examples": ["find similar", "clients like", "lookalikes"],
-                    "method": "_find_similar_clients"
-                },
+                "outputs": {
+                    "field_name": "Description of output field"
+                }
             }
         """
         pass

@@ -271,12 +271,60 @@ backend/app/agents/
 |---|------|--------|--------|-------|
 | 1 | 2025-12-02 | Reverted to v2.0.0-baseline | DONE | Clean slate established |
 | 2 | 2025-12-02 | Cleaned up PROJECT-MASTER.md | DONE | Removed old execution plan |
-| 3 | | data_ingestion architecture design | PENDING | |
-| 4 | | data_ingestion implementation | PENDING | |
-| 5 | | data_ingestion testing | PENDING | |
-| 6 | | data_discovery architecture design | PENDING | |
-| 7 | | data_discovery implementation | PENDING | |
-| 8 | | data_discovery testing | PENDING | |
+| 3 | 2025-12-02 | data_ingestion architecture design | DONE | Removed all violations, added type detection |
+| 4 | 2025-12-02 | data_ingestion implementation | DONE | See details below |
+| 5 | 2025-12-02 | AgentRegistry + @register_agent | DONE | Dynamic discovery pattern |
+| 6 | 2025-12-02 | data_ingestion deployment | IN PROGRESS | |
+| 7 | | data_discovery architecture design | PENDING | |
+| 8 | | data_discovery implementation | PENDING | |
+| 9 | | data_discovery testing | PENDING | |
+
+---
+
+### Session Details: 2025-12-02
+
+#### data_ingestion Agent Rewrite
+
+**Violations Fixed:**
+- Removed `when_to_use` with keywords
+- Removed `when_not_to_use` with keywords
+- Removed `example_tasks` with specific phrases
+- Removed `examples` arrays in capabilities
+- Removed `_trigger_metadata_computation()` (cross-agent import of DataDiscoveryAgent)
+
+**New Features:**
+- `_detect_column_types()` - Programmatic type detection (int, float, date, bool, text)
+- `_cast_value()` - Type-aware value casting for proper JSONB storage
+- `_analyze_schema()` - LLM analysis with type context
+- `_transform_row()` - Updated to use type casting
+- `requires_metadata_refresh` - Return flag instead of cross-agent call
+
+**New `get_agent_info()` Structure:**
+```python
+{
+    "name": "data_ingestion",
+    "description": "Processes external data files and loads records into the system",
+    "capabilities": [...],  # Generic descriptions only
+    "inputs": {...},
+    "outputs": {...}  # Includes requires_metadata_refresh flag
+}
+```
+
+#### AgentRegistry Pattern Added
+
+**Files Modified:**
+- `base.py` - Added `AgentRegistry` singleton and `@register_agent` decorator
+- `data_ingestion.py` - Added `@register_agent` decorator
+- `__init__.py` - Export registry, import agents to trigger registration
+
+**How Orchestrator Uses Registry:**
+```python
+from app.agents import AgentRegistry
+
+schema = AgentRegistry.get_registry_schema()
+# Returns: [{"name": "data_ingestion", "description": "...", "capabilities": [...]}]
+# Inject into LLM prompt for semantic routing
+```
 
 ---
 
