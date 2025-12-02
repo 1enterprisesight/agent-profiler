@@ -1,64 +1,35 @@
-import { useState } from 'react';
-import { Wifi, Radio } from 'lucide-react';
-import { AgentNetwork } from './components/AgentNetwork';
-import { ChatInterface } from './components/ChatInterface';
-import { WorkflowDisplay } from './components/WorkflowDisplay';
 import { DataSourceList } from './components/DataSourceList';
-import { DataSourceManager } from './components/DataSourceManager';
+import { DataUpload } from './components/DataUpload';
 import { LoginButton } from './components/LoginButton';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { useAuth } from './contexts/AuthContext';
-import type { TransparencyEvent } from './types';
 
 function App() {
-  const [activeAgents, setActiveAgents] = useState<string[]>([]);
-  const [currentWorkflow, setCurrentWorkflow] = useState<any>(null);
-  const [transparencyEvents, setTransparencyEvents] = useState<TransparencyEvent[]>([]);
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [showDataManager, setShowDataManager] = useState(false);
   const { isAuthenticated, isLoading } = useAuth();
+
+  const handleUploadComplete = () => {
+    // Trigger refresh of data source list
+    window.dispatchEvent(new CustomEvent('datasource:refresh'));
+  };
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col">
-      {/* HEADER - Sticky at top */}
+      {/* HEADER */}
       <header className="sticky top-0 z-50 border-b border-slate-800 bg-slate-900/95 backdrop-blur">
-        <div className="max-w-[1800px] mx-auto px-4 py-3">
+        <div className="max-w-4xl mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl font-bold bg-gradient-to-r from-primary-400 to-purple-400 bg-clip-text text-transparent">
                 Agent Profiler
               </h1>
-              <p className="text-xs text-slate-400">Multi-Agent AI System</p>
+              <p className="text-xs text-slate-400">Data Management</p>
             </div>
-            <div className="flex items-center gap-4">
-              {isAuthenticated && (
-                <div className="flex items-center gap-3">
-                  {isStreaming ? (
-                    <div className="flex items-center gap-2 px-3 py-1 bg-emerald-500/10 border border-emerald-500/30 rounded-full">
-                      <Radio className="w-3 h-3 text-emerald-400 animate-pulse" />
-                      <span className="text-xs text-emerald-400 font-medium">Live</span>
-                    </div>
-                  ) : isProcessing ? (
-                    <div className="flex items-center gap-2 px-3 py-1 bg-amber-500/10 border border-amber-500/30 rounded-full">
-                      <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                      <span className="text-xs text-amber-400">Processing</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 px-3 py-1 bg-slate-800 border border-slate-700 rounded-full">
-                      <Wifi className="w-3 h-3 text-emerald-500" />
-                      <span className="text-xs text-slate-400">Ready</span>
-                    </div>
-                  )}
-                </div>
-              )}
-              <LoginButton />
-            </div>
+            <LoginButton />
           </div>
         </div>
       </header>
 
-      {/* MAIN CONTENT - Scrollable */}
+      {/* MAIN CONTENT */}
       <main className="flex-1">
         {isLoading ? (
           <div className="flex items-center justify-center min-h-[400px]">
@@ -84,72 +55,22 @@ function App() {
           </div>
         ) : (
           <ErrorBoundary>
-            {/* HERO: Agent Network - Full width, prominent at top */}
-            <section className="border-b border-slate-800 bg-slate-900/30">
-              <div className="max-w-[1800px] mx-auto p-4">
-                <div className="h-[350px] lg:h-[400px]">
-                  <ErrorBoundary>
-                    <AgentNetwork
-                      activeAgents={activeAgents}
-                      transparencyEvents={transparencyEvents}
-                      isProcessing={isProcessing}
-                      isStreaming={isStreaming}
-                    />
-                  </ErrorBoundary>
-                </div>
-              </div>
-            </section>
+            <div className="max-w-4xl mx-auto p-4 space-y-6">
+              {/* Upload Section */}
+              <section>
+                <DataUpload onUploadComplete={handleUploadComplete} />
+              </section>
 
-            {/* CONTENT: Chat + Sidebar - Natural heights, page scrolls */}
-            <section className="max-w-[1800px] mx-auto p-4">
-              <div className="flex flex-col lg:flex-row gap-4">
-                {/* Chat Interface - Main column */}
-                <div className="flex-1 min-w-0">
-                  <ErrorBoundary>
-                    <ChatInterface
-                      onAgentsActive={setActiveAgents}
-                      onWorkflowUpdate={setCurrentWorkflow}
-                      onTransparencyEvents={setTransparencyEvents}
-                      onProcessingChange={setIsProcessing}
-                      onStreamingChange={setIsStreaming}
-                      onNewChat={() => {
-                        setTransparencyEvents([]);
-                        setCurrentWorkflow(null);
-                        setActiveAgents([]);
-                        setIsStreaming(false);
-                      }}
-                    />
-                  </ErrorBoundary>
-                </div>
-
-                {/* Sidebar: Data Sources + Workflow */}
-                <aside className="lg:w-[380px] flex-shrink-0 flex flex-col gap-4">
-                  {/* Data Sources - Collapsible */}
-                  <ErrorBoundary>
-                    <DataSourceList onManageClick={() => setShowDataManager(true)} />
-                  </ErrorBoundary>
-
-                  {/* Workflow Display - Scrollable */}
-                  <div className="flex-1 min-h-[400px] max-h-[600px] overflow-y-auto">
-                    <ErrorBoundary>
-                      <WorkflowDisplay
-                        workflow={currentWorkflow}
-                        transparencyEvents={transparencyEvents}
-                      />
-                    </ErrorBoundary>
-                  </div>
-                </aside>
-              </div>
-            </section>
+              {/* Data Sources List */}
+              <section>
+                <ErrorBoundary>
+                  <DataSourceList />
+                </ErrorBoundary>
+              </section>
+            </div>
           </ErrorBoundary>
         )}
       </main>
-
-      {/* Data Source Manager Modal */}
-      <DataSourceManager
-        isOpen={showDataManager}
-        onClose={() => setShowDataManager(false)}
-      />
     </div>
   );
 }

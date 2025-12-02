@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Database, Calendar, FileText, AlertCircle } from 'lucide-react';
+import { Database, Calendar, FileText, AlertCircle, Trash2 } from 'lucide-react';
 import { dataApi } from '../services/api';
-import { DataUpload } from './DataUpload';
 
 interface DataSource {
   id: string;
@@ -14,14 +13,11 @@ interface DataSource {
   metadata: any;
 }
 
-interface DataSourceListProps {
-  onManageClick?: () => void;
-}
-
-export function DataSourceList({ onManageClick }: DataSourceListProps) {
+export function DataSourceList() {
   const [dataSources, setDataSources] = useState<DataSource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const loadDataSources = async () => {
     try {
@@ -37,11 +33,35 @@ export function DataSourceList({ onManageClick }: DataSourceListProps) {
     }
   };
 
+  const handleDelete = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this data source?')) return;
+
+    try {
+      setDeleting(id);
+      await dataApi.deleteDataSource(id);
+      await loadDataSources();
+    } catch (err) {
+      console.error('Failed to delete:', err);
+      setError('Failed to delete data source');
+    } finally {
+      setDeleting(null);
+    }
+  };
+
   useEffect(() => {
     loadDataSources();
+
+    // Listen for refresh events from DataUpload
+    const handleRefresh = () => loadDataSources();
+    window.addEventListener('datasource:refresh', handleRefresh);
+
     // Refresh every 30 seconds
     const interval = setInterval(loadDataSources, 30000);
-    return () => clearInterval(interval);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('datasource:refresh', handleRefresh);
+    };
   }, []);
 
   if (loading && dataSources.length === 0) {
@@ -49,7 +69,7 @@ export function DataSourceList({ onManageClick }: DataSourceListProps) {
       <div className="bg-slate-800 rounded-lg p-6">
         <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <Database className="w-5 h-5" />
-          Active Data Sources
+          Data Sources
         </h3>
         <div className="text-center text-slate-400 py-8">
           <div className="animate-pulse">Loading...</div>
@@ -63,7 +83,7 @@ export function DataSourceList({ onManageClick }: DataSourceListProps) {
       <div className="bg-slate-800 rounded-lg p-6">
         <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
           <Database className="w-5 h-5" />
-          Active Data Sources
+          Data Sources
         </h3>
         <div className="flex items-center gap-2 text-red-400 text-sm">
           <AlertCircle className="w-4 h-4" />
@@ -78,23 +98,10 @@ export function DataSourceList({ onManageClick }: DataSourceListProps) {
 
   return (
     <div className="bg-slate-800 rounded-lg p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-          <Database className="w-5 h-5" />
-          Active Data Sources
-        </h3>
-        <div className="flex items-center gap-2">
-          <DataUpload onUploadComplete={loadDataSources} />
-          {onManageClick && (
-            <button
-              onClick={onManageClick}
-              className="text-sm text-primary-400 hover:text-primary-300 transition-colors"
-            >
-              Manage
-            </button>
-          )}
-        </div>
-      </div>
+      <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+        <Database className="w-5 h-5" />
+        Data Sources
+      </h3>
 
       {activeDataSources.length === 0 ? (
         <div className="text-center text-slate-400 py-8">
@@ -116,29 +123,32 @@ export function DataSourceList({ onManageClick }: DataSourceListProps) {
             </div>
           </div>
 
-          {/* Data Source List - show all since panel is scrollable */}
+          {/* Data Source List */}
           <div className="space-y-2">
             {activeDataSources.map((ds) => (
-              <DataSourceCard key={ds.id} dataSource={ds} />
+              <DataSourceCard
+                key={ds.id}
+                dataSource={ds}
+                onDelete={() => handleDelete(ds.id)}
+                isDeleting={deleting === ds.id}
+              />
             ))}
           </div>
-
-          {/* Manage link always visible */}
-          {activeDataSources.length > 0 && (
-            <button
-              onClick={onManageClick}
-              className="w-full mt-3 text-sm text-slate-400 hover:text-white transition-colors"
-            >
-              Manage data sources →
-            </button>
-          )}
         </>
       )}
     </div>
   );
 }
 
-function DataSourceCard({ dataSource }: { dataSource: DataSource }) {
+function DataSourceCard({
+  dataSource,
+  onDelete,
+  isDeleting
+}: {
+  dataSource: DataSource;
+  onDelete: () => void;
+  isDeleting: boolean;
+}) {
   const uploadDate = new Date(dataSource.created_at);
   const isRecent = Date.now() - uploadDate.getTime() < 24 * 60 * 60 * 1000; // Last 24 hours
 
@@ -165,6 +175,18 @@ function DataSourceCard({ dataSource }: { dataSource: DataSource }) {
             <span>{(dataSource.records_ingested || 0).toLocaleString()} records</span>
           </div>
         </div>
+        <button
+          onClick={onDelete}
+          disabled={isDeleting}
+          className="p-1 text-slate-400 hover:text-red-400 transition-colors disabled:opacity-50"
+          title="Delete data source"
+        >
+          {isDeleting ? (
+            <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Trash2 className="w-4 h-4" />
+          )}
+        </button>
       </div>
     </div>
   );

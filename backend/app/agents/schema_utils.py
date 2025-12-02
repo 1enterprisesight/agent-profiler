@@ -279,7 +279,7 @@ def build_sql_schema_description(schema_context: Dict[str, Any]) -> str:
     # Text fields - mention they exist but shouldn't be used with LIKE
     if schema_context.get("text_fields"):
         text_names = [f["name"] for f in schema_context["text_fields"]]
-        lines.append(f"\nText fields (DO NOT query with SQL - use Semantic Search): {', '.join(text_names)}")
+        lines.append(f"\nText fields (SQL CAN do GROUP BY/COUNT/exact match, should NOT do LIKE/ILIKE - use Semantic Search for fuzzy text): {', '.join(text_names)}")
 
     lines.append("\nCRITICAL: Never use LIKE/ILIKE. Route text searches to Semantic Search agent.")
 
