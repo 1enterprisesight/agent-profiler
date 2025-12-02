@@ -1,14 +1,9 @@
 """
-Data Discovery Agent - Phase D Self-Describing Agent
+Data Discovery Agent
 
-Provides metadata and context about a user's data to help other agents
-understand the data landscape before executing queries.
-
-Key responsibilities:
-- Compute and store statistics about uploaded data
-- Provide semantic context (what is "high value" in this dataset?)
-- Answer questions about data completeness and quality
-- Help the orchestrator make informed routing decisions
+Analyzes data sources to produce semantic understanding of the data.
+Uses LLM to determine entity types, domains, field categories, and relationships.
+Stores semantic profile with data source for other agents to reference.
 """
 
 from typing import Dict, Any, Optional, List
@@ -20,80 +15,40 @@ from sqlalchemy import text
 import vertexai
 from vertexai.preview.generative_models import GenerativeModel
 
-from app.agents.base import BaseAgent, AgentMessage, AgentResponse, AgentStatus
-from app.agents.schema_utils import get_schema_context
-from app.models import DataMetadata, Client
+from app.agents.base import BaseAgent, AgentMessage, AgentResponse, AgentStatus, EventType, register_agent
 from app.config import settings
 
 
+@register_agent
 class DataDiscoveryAgent(BaseAgent):
     """
-    Self-describing agent that provides data context and metadata.
-
-    Capabilities:
-    - compute_metadata: Analyze all user data and compute statistics
-    - get_context: Return current data context for planning
-    - describe_field: Get semantic meaning of a specific field
-    - get_thresholds: Get computed thresholds (e.g., what is "high value"?)
+    Analyzes data sources to produce semantic understanding.
+    Uses LLM to determine entity types, domains, field categories,
+    and relationships. Stores semantic profile with data source.
     """
-
-    name = "data_discovery"
-    description = "Analyzes and provides context about user's data"
 
     @classmethod
     def get_agent_info(cls) -> Dict[str, Any]:
+        """Agent metadata for orchestrator's dynamic routing."""
         return {
-            "name": cls.name,
-            "purpose": "Explore, profile, and describe user's uploaded data - structure, fields, statistics, and semantic context",
-            "when_to_use": [
-                "User asks 'what is this dataset about' or 'describe my data'",
-                "User asks 'what are the key elements/fields in this data'",
-                "User wants to understand or explore their data before querying",
-                "User asks about data quality, completeness, or structure",
-                "When interpreting vague terms like 'high value' or 'recent'",
-                "To get field statistics (min, max, average, percentiles)",
-                "To profile or explore a new dataset",
+            "name": "data_discovery",
+            "description": "Analyzes data sources to produce semantic understanding of the data",
+            "capabilities": [
+                "Identify entity types and domain from schema and sample data",
+                "Categorize fields by purpose (identity, metrics, segmentation, etc.)",
+                "Infer relationships between fields",
+                "Generate suggested analyses based on data nature",
+                "Store semantic profile with data source for other agents"
             ],
-            "when_not_to_use": [
-                "For actual data queries with filters (use sql_analytics)",
-                "For text search (use semantic_search)",
-                "For data upload (use data_ingestion)",
-            ],
-            "example_tasks": [
-                "What is this dataset about?",
-                "What are the key elements in my data?",
-                "Describe the structure of my uploaded data",
-                "What fields have data in my dataset?",
-                "What is considered 'high value' in my data?",
-                "Get statistics for the AUM field",
-                "How complete is my email data?",
-                "Profile my client data",
-            ],
-            "data_source_aware": True,
-        }
-
-    def get_capabilities(self) -> Dict[str, Dict[str, Any]]:
-        return {
-            "compute_metadata": {
-                "description": "Analyze all data and compute/update statistics",
-                "examples": ["refresh data statistics", "recompute metadata"],
-                "method": "_compute_metadata"
+            "inputs": {
+                "data_source_id": "ID of the data source to analyze",
+                "schema": "Column names and detected types (optional - loaded from data source)",
+                "sample_data": "Sample rows for context (optional - loaded from database)"
             },
-            "get_context": {
-                "description": "Get current data context for query planning",
-                "examples": ["get data context", "what data do I have"],
-                "method": "_get_context"
-            },
-            "get_thresholds": {
-                "description": "Get computed thresholds for semantic terms",
-                "examples": ["what is high value", "define recent clients"],
-                "method": "_get_thresholds"
-            },
-            "get_field_stats": {
-                "description": "Get statistics for a specific field",
-                "examples": ["AUM statistics", "email completeness"],
-                "method": "_get_field_stats"
-            },
+            "outputs": {
+                "semantic_profile": "Entity type, domain, categories, relationships",
+                "stored": "Boolean - whether profile was stored with data source"
+            }
         }
 
     def __init__(self):
@@ -104,457 +59,336 @@ class DataDiscoveryAgent(BaseAgent):
         )
         self.model = GenerativeModel(settings.gemini_flash_model)
 
-    async def _interpret_task(
-        self,
-        task: str,
-        db: AsyncSession,
-        user_id: str
-    ) -> Dict[str, Any]:
-        """Use LLM to interpret what the user wants to know about their data."""
-
-        await self.emit_event(
-            db, user_id, None, "thinking",
-            "Interpreting data discovery request",
-            {"task": task}
-        )
-
-        prompt = f"""You are analyzing a request about data discovery/metadata.
-
-Task: "{task}"
-
-Determine the appropriate action:
-1. "compute_metadata" - User wants to refresh/compute statistics
-2. "get_context" - User wants overview of their data
-3. "get_thresholds" - User wants to understand semantic terms (high value, recent, etc.)
-4. "get_field_stats" - User wants stats for specific field(s)
-
-Respond with JSON:
-{{
-    "action": "action_name",
-    "fields": ["field1", "field2"],  // if specific fields mentioned
-    "terms": ["term1"],  // semantic terms to define (high value, recent, etc.)
-    "reasoning": "why this action"
-}}"""
-
-        response = await self.model.generate_content_async(prompt)
-        response_text = response.text.strip()
-
-        # Parse JSON from response
-        if "```json" in response_text:
-            response_text = response_text.split("```json")[1].split("```")[0]
-        elif "```" in response_text:
-            response_text = response_text.split("```")[1].split("```")[0]
-
-        try:
-            return json.loads(response_text)
-        except json.JSONDecodeError:
-            return {"action": "get_context", "reasoning": "default fallback"}
-
     async def _execute_internal(
         self,
         message: AgentMessage,
         db: AsyncSession,
         user_id: str
     ) -> AgentResponse:
-        """Execute data discovery task."""
+        """Execute data discovery - analyze and store semantic profile."""
 
-        task = message.action
+        start_time = datetime.utcnow()
+        conversation_id = message.conversation_id
+        data_source_id = message.payload.get("data_source_id")
 
-        await self.emit_event(
-            db, user_id, message.conversation_id, "received",
-            f"Data discovery request: {task[:50]}...",
-            {"full_task": task}
-        )
+        # Helper for events
+        async def emit(event_type: EventType, title: str, details: Dict = None, step: int = 1):
+            await self.emit_event(
+                db=db,
+                user_id=user_id,
+                session_id=conversation_id,
+                event_type=event_type,
+                title=title,
+                details=details or {},
+                step_number=step
+            )
 
-        # Interpret the task
-        interpretation = await self._interpret_task(task, db, user_id)
-        action = interpretation.get("action", "get_context")
+        try:
+            # Event 1: RECEIVED
+            await emit(EventType.RECEIVED, "Received data discovery request",
+                      {"data_source_id": data_source_id}, 1)
 
-        await self.emit_event(
-            db, user_id, message.conversation_id, "decision",
-            f"Action: {action}",
-            interpretation
-        )
-
-        # Execute appropriate method
-        if action == "compute_metadata":
-            result = await self._compute_metadata(db, user_id)
-        elif action == "get_thresholds":
-            terms = interpretation.get("terms", [])
-            result = await self._get_thresholds(db, user_id, terms)
-        elif action == "get_field_stats":
-            fields = interpretation.get("fields", [])
-            result = await self._get_field_stats(db, user_id, fields)
-        else:
-            result = await self._get_context(db, user_id)
-
-        await self.emit_event(
-            db, user_id, message.conversation_id, "result",
-            "Data discovery complete",
-            {"summary": str(result)[:200]}
-        )
-
-        return AgentResponse(
-            status=AgentStatus.SUCCESS,
-            result=result,
-            metadata={"action": action, "interpretation": interpretation}
-        )
-
-    async def _compute_metadata(
-        self,
-        db: AsyncSession,
-        user_id: str
-    ) -> Dict[str, Any]:
-        """Compute and store comprehensive metadata about user's data using dynamic schema."""
-
-        await self.emit_event(
-            db, user_id, None, "action",
-            "Computing data statistics",
-            {}
-        )
-
-        # Get dynamic schema context - this knows all fields and their types
-        schema_context = await get_schema_context(db, user_id)
-
-        # Get total counts by source
-        sources_query = text("""
-            SELECT source_type, COUNT(*) as count
-            FROM clients
-            WHERE user_id = :user_id
-            GROUP BY source_type
-        """)
-        sources_result = await db.execute(sources_query, {"user_id": user_id})
-        sources_summary = {row[0]: row[1] for row in sources_result.fetchall()}
-        total_clients = sum(sources_summary.values())
-
-        # Compute field completeness dynamically for all discovered fields
-        field_completeness = {}
-
-        # Always check core columns
-        core_columns = [
-            ("email", "contact_email IS NOT NULL AND contact_email != ''"),
-            ("company", "company_name IS NOT NULL AND company_name != ''"),
-            ("client_name", "client_name IS NOT NULL AND client_name != ''"),
-        ]
-
-        for field_name, condition in core_columns:
-            try:
-                query = text(f"""
-                    SELECT COUNT(*) FILTER (WHERE {condition}) * 100.0 / NULLIF(COUNT(*), 0)
-                    FROM clients WHERE user_id = :user_id
-                """)
-                result = await db.execute(query, {"user_id": user_id})
+            # If no data_source_id, try to get the most recent one for the user
+            if not data_source_id:
+                await emit(EventType.THINKING, "Finding most recent data source", {}, 2)
+                result = await db.execute(
+                    text("""
+                        SELECT id FROM uploaded_files
+                        WHERE user_id = :user_id
+                        ORDER BY uploaded_at DESC LIMIT 1
+                    """),
+                    {"user_id": user_id}
+                )
                 row = result.fetchone()
-                field_completeness[field_name] = round(row[0] or 0, 1)
-            except Exception:
-                pass
+                if not row:
+                    return AgentResponse(
+                        status=AgentStatus.FAILED,
+                        result={"error": "No data sources found for user"},
+                        metadata={}
+                    )
+                data_source_id = str(row[0])
 
-        # Check discovered fields from schema
-        for field in schema_context.get("all_fields", {}).values():
-            if isinstance(field, dict):
-                field_name = field.get("name")
-                null_pct = field.get("null_pct", 100)
-                if field_name:
-                    field_completeness[field_name] = round(100 - null_pct, 1)
+            # Event 2: THINKING - Loading schema
+            await emit(EventType.THINKING, "Loading schema and sample data",
+                      {"data_source_id": data_source_id}, 2)
 
-        # Get numeric stats for all numeric fields
-        numeric_stats = {}
-        for field in schema_context.get("numeric_fields", []):
-            field_name = field.get("name")
-            access_path = field.get("access_path", f"custom_data->>'{field_name}'")
+            # Load schema from data source
+            schema_result = await db.execute(
+                text("""
+                    SELECT metadata, file_name
+                    FROM uploaded_files
+                    WHERE id = :data_source_id
+                """),
+                {"data_source_id": data_source_id}
+            )
+            schema_row = schema_result.fetchone()
 
-            try:
-                numeric_query = text(f"""
-                    SELECT
-                        MIN(({access_path})::numeric) as min_val,
-                        MAX(({access_path})::numeric) as max_val,
-                        AVG(({access_path})::numeric) as avg_val,
-                        PERCENTILE_CONT(0.1) WITHIN GROUP (ORDER BY ({access_path})::numeric) as p10,
-                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY ({access_path})::numeric) as p50,
-                        PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY ({access_path})::numeric) as p90
+            if not schema_row:
+                return AgentResponse(
+                    status=AgentStatus.FAILED,
+                    result={"error": f"Data source {data_source_id} not found"},
+                    metadata={}
+                )
+
+            metadata = schema_row[0] if isinstance(schema_row[0], dict) else json.loads(schema_row[0] or "{}")
+            file_name = schema_row[1]
+
+            columns = metadata.get("columns", [])
+            detected_types = metadata.get("detected_types", {})
+
+            # Load sample data from clients table
+            sample_result = await db.execute(
+                text("""
+                    SELECT core_data, custom_data
                     FROM clients
-                    WHERE user_id = :user_id
-                      AND {access_path} IS NOT NULL
-                      AND {access_path} ~ '^-?[0-9.,]+$'
-                """)
-                result = await db.execute(numeric_query, {"user_id": user_id})
-                row = result.fetchone()
-                if row and row[0] is not None:
-                    numeric_stats[field_name] = {
-                        "min": float(row[0]) if row[0] else None,
-                        "max": float(row[1]) if row[1] else None,
-                        "avg": float(row[2]) if row[2] else None,
-                        "p10": float(row[3]) if row[3] else None,
-                        "p50": float(row[4]) if row[4] else None,
-                        "p90": float(row[5]) if row[5] else None,
-                    }
-            except Exception as e:
-                self.logger.debug(f"Could not compute stats for {field_name}: {e}")
+                    WHERE data_source_id = :data_source_id
+                    LIMIT 5
+                """),
+                {"data_source_id": data_source_id}
+            )
+            sample_rows = sample_result.fetchall()
 
-        # Get date ranges
-        date_query = text("""
-            SELECT
-                MIN(created_at) as min_created,
-                MAX(created_at) as max_created,
-                MIN(synced_at) as min_synced,
-                MAX(synced_at) as max_synced
-            FROM clients
-            WHERE user_id = :user_id
-        """)
-        date_result = await db.execute(date_query, {"user_id": user_id})
-        date_row = date_result.fetchone()
-        date_ranges = {
-            "created_at": {
-                "min": date_row[0].isoformat() if date_row[0] else None,
-                "max": date_row[1].isoformat() if date_row[1] else None,
-            },
-            "synced_at": {
-                "min": date_row[2].isoformat() if date_row[2] else None,
-                "max": date_row[3].isoformat() if date_row[3] else None,
+            # Combine core_data and custom_data for sample
+            sample_data = []
+            for row in sample_rows:
+                combined = {}
+                if row[0]:
+                    core = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+                    combined.update(core)
+                if row[1]:
+                    custom = row[1] if isinstance(row[1], dict) else json.loads(row[1])
+                    combined.update(custom)
+                sample_data.append(combined)
+
+            # Event 3: ACTION - LLM analysis
+            await emit(EventType.ACTION, "Analyzing data semantics with LLM",
+                      {"columns": len(columns), "sample_rows": len(sample_data)}, 3)
+
+            # Build schema context for LLM
+            schema_context = {
+                "file_name": file_name,
+                "columns": columns,
+                "detected_types": detected_types
             }
-        }
 
-        # Compute thresholds based on percentiles for all numeric fields
-        computed_thresholds = {}
-        for field_name, stats in numeric_stats.items():
-            if stats.get("p90"):
-                computed_thresholds[f"high_{field_name}"] = stats["p90"]
-            if stats.get("p50"):
-                computed_thresholds[f"medium_{field_name}"] = stats["p50"]
+            # Call LLM to analyze semantics
+            semantic_profile = await self._analyze_semantics(schema_context, sample_data)
 
-        # Keep backwards compatibility for "aum" specifically
-        if numeric_stats.get("aum", {}).get("p90"):
-            computed_thresholds["high_value_aum"] = numeric_stats["aum"]["p90"]
-        if numeric_stats.get("aum", {}).get("p50"):
-            computed_thresholds["medium_value_aum"] = numeric_stats["aum"]["p50"]
+            # Event 4: ACTION - Storing profile
+            await emit(EventType.ACTION, "Storing semantic profile",
+                      {"entity_type": semantic_profile.get("entity_type", "unknown")}, 4)
 
-        # Upsert metadata record
-        existing = await db.execute(
-            text("SELECT id FROM data_metadata WHERE user_id = :user_id"),
-            {"user_id": user_id}
+            # Store semantic profile with data source
+            await self._store_semantic_profile(db, data_source_id, semantic_profile)
+
+            # Calculate duration
+            duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+
+            # Event 5: RESULT
+            await emit(EventType.RESULT,
+                      f"Discovered: {semantic_profile.get('entity_name', 'entity')} data in {semantic_profile.get('domain', 'unknown')} domain",
+                      {"profile": semantic_profile}, 5)
+
+            return AgentResponse(
+                status=AgentStatus.COMPLETED,
+                result={
+                    "data_source_id": data_source_id,
+                    "semantic_profile": semantic_profile,
+                    "stored": True,
+                    "message": f"Semantic profile created for {file_name}"
+                },
+                metadata={
+                    "duration_ms": duration_ms,
+                    "model_used": settings.gemini_flash_model
+                }
+            )
+
+        except Exception as e:
+            # Event: ERROR
+            await emit(EventType.ERROR, f"Discovery failed: {str(e)}",
+                      {"error": str(e)}, 99)
+
+            return AgentResponse(
+                status=AgentStatus.FAILED,
+                result={"error": str(e)},
+                metadata={}
+            )
+
+    async def _analyze_semantics(self, schema: Dict, sample_data: List[Dict]) -> Dict:
+        """LLM analyzes schema + sample to produce semantic profile."""
+
+        prompt = f"""Analyze this data schema and sample to understand what this data represents.
+
+FILE NAME: {schema.get('file_name', 'unknown')}
+
+COLUMNS AND TYPES:
+{json.dumps(schema.get('detected_types', {}), indent=2)}
+
+SAMPLE DATA (first rows):
+{json.dumps(sample_data[:5], indent=2, default=str)}
+
+Analyze and determine:
+
+1. entity_type: What type of entity does each row represent?
+   Examples: person, company, transaction, event, product, location, etc.
+
+2. entity_name: Specific name for this entity based on the data
+   Examples: doctor, customer, order, employee, patient, etc.
+
+3. domain: What industry or domain is this data from?
+   Examples: healthcare, finance, retail, manufacturing, etc.
+
+4. primary_key: Which field(s) uniquely identify each record?
+
+5. data_categories: Group ALL fields by their purpose:
+   - identity: Fields that identify the entity (IDs, names)
+   - performance_metrics: Numeric KPIs and measures
+   - segmentation: Fields used to group/categorize/tier
+   - geography: Location-related fields
+   - temporal: Date/time fields
+   - relationships: Fields linking to other entities (managers, territories)
+   - preferences: Settings, opt-ins, flags
+   - other: Any fields that don't fit above
+
+6. field_descriptions: For each field, provide a brief description of what it represents
+
+7. relationships: What relationships between entities can be inferred?
+   Example: {{"field": "territory_manager", "relationship": "assigned_to", "target_entity": "sales_rep"}}
+
+8. suggested_analyses: What business questions could this data answer? (list 5-7)
+
+Return valid JSON only:
+{{
+  "entity_type": "...",
+  "entity_name": "...",
+  "domain": "...",
+  "domain_description": "...",
+  "primary_key": "...",
+  "data_categories": {{
+    "identity": ["field1", "field2"],
+    "performance_metrics": ["field1"],
+    "segmentation": ["field1"],
+    "geography": ["field1"],
+    "temporal": ["field1"],
+    "relationships": ["field1"],
+    "preferences": ["field1"],
+    "other": ["field1"]
+  }},
+  "field_descriptions": {{
+    "field_name": "description of what this field represents"
+  }},
+  "relationships": [
+    {{"field": "...", "relationship": "...", "target_entity": "..."}}
+  ],
+  "suggested_analyses": [
+    "Question 1",
+    "Question 2"
+  ]
+}}"""
+
+        try:
+            response = await self.model.generate_content_async(
+                prompt,
+                generation_config={"temperature": 0.2}
+            )
+            response_text = response.text.strip()
+
+            # Parse JSON from response
+            if "```json" in response_text:
+                response_text = response_text.split("```json")[1].split("```")[0]
+            elif "```" in response_text:
+                response_text = response_text.split("```")[1].split("```")[0]
+
+            return json.loads(response_text.strip())
+
+        except json.JSONDecodeError as e:
+            self.logger.error("llm_response_parse_error", error=str(e))
+            # Return minimal profile on parse failure
+            return {
+                "entity_type": "unknown",
+                "entity_name": "record",
+                "domain": "unknown",
+                "primary_key": None,
+                "data_categories": {},
+                "field_descriptions": {},
+                "relationships": [],
+                "suggested_analyses": [],
+                "parse_error": str(e)
+            }
+
+        except Exception as e:
+            self.logger.error("llm_analysis_error", error=str(e))
+            raise
+
+    async def _store_semantic_profile(self, db: AsyncSession, data_source_id: str, profile: Dict):
+        """Store semantic profile in uploaded_files.metadata."""
+
+        profile["analyzed_at"] = datetime.utcnow().isoformat()
+
+        await db.execute(
+            text("""
+                UPDATE uploaded_files
+                SET metadata = jsonb_set(
+                    COALESCE(metadata, '{}'),
+                    '{semantic_profile}',
+                    :profile::jsonb
+                ),
+                updated_at = NOW()
+                WHERE id = :data_source_id
+            """),
+            {"data_source_id": data_source_id, "profile": json.dumps(profile)}
         )
-        existing_row = existing.fetchone()
-
-        if existing_row:
-            await db.execute(
-                text("""
-                    UPDATE data_metadata SET
-                        total_clients = :total_clients,
-                        sources_summary = :sources_summary,
-                        field_completeness = :field_completeness,
-                        numeric_stats = :numeric_stats,
-                        date_ranges = :date_ranges,
-                        computed_thresholds = :computed_thresholds,
-                        last_computed_at = NOW(),
-                        updated_at = NOW()
-                    WHERE user_id = :user_id
-                """),
-                {
-                    "user_id": user_id,
-                    "total_clients": total_clients,
-                    "sources_summary": json.dumps(sources_summary),
-                    "field_completeness": json.dumps(field_completeness),
-                    "numeric_stats": json.dumps(numeric_stats),
-                    "date_ranges": json.dumps(date_ranges),
-                    "computed_thresholds": json.dumps(computed_thresholds),
-                }
-            )
-        else:
-            await db.execute(
-                text("""
-                    INSERT INTO data_metadata
-                    (user_id, total_clients, sources_summary, field_completeness,
-                     numeric_stats, date_ranges, computed_thresholds)
-                    VALUES (:user_id, :total_clients, :sources_summary, :field_completeness,
-                            :numeric_stats, :date_ranges, :computed_thresholds)
-                """),
-                {
-                    "user_id": user_id,
-                    "total_clients": total_clients,
-                    "sources_summary": json.dumps(sources_summary),
-                    "field_completeness": json.dumps(field_completeness),
-                    "numeric_stats": json.dumps(numeric_stats),
-                    "date_ranges": json.dumps(date_ranges),
-                    "computed_thresholds": json.dumps(computed_thresholds),
-                }
-            )
-
         await db.commit()
 
-        return {
-            "total_clients": total_clients,
-            "sources": sources_summary,
-            "field_completeness": field_completeness,
-            "numeric_stats": numeric_stats,
-            "date_ranges": date_ranges,
-            "computed_thresholds": computed_thresholds,
-            "schema": schema_context,
-            "message": f"Computed metadata for {total_clients} clients across {len(sources_summary)} sources"
-        }
+    async def get_semantic_profile(self, db: AsyncSession, data_source_id: str) -> Optional[Dict]:
+        """Retrieve semantic profile for a data source. Used by other agents."""
 
-    async def _get_context(
-        self,
-        db: AsyncSession,
-        user_id: str
-    ) -> Dict[str, Any]:
-        """Get current data context for query planning, including dynamic schema."""
-
-        # Get dynamic schema context
-        schema_context = await get_schema_context(db, user_id)
-
-        # Try to get cached metadata
         result = await db.execute(
             text("""
-                SELECT total_clients, sources_summary, field_completeness,
-                       numeric_stats, computed_thresholds, last_computed_at
-                FROM data_metadata
-                WHERE user_id = :user_id
+                SELECT metadata->'semantic_profile' as profile
+                FROM uploaded_files
+                WHERE id = :data_source_id
             """),
-            {"user_id": user_id}
+            {"data_source_id": data_source_id}
         )
         row = result.fetchone()
 
-        if not row or not row[0]:
-            # No metadata, compute it
-            metadata = await self._compute_metadata(db, user_id)
-            metadata["schema"] = schema_context
-            return metadata
-
-        return {
-            "total_clients": row[0],
-            "sources": row[1] if isinstance(row[1], dict) else json.loads(row[1] or "{}"),
-            "field_completeness": row[2] if isinstance(row[2], dict) else json.loads(row[2] or "{}"),
-            "numeric_stats": row[3] if isinstance(row[3], dict) else json.loads(row[3] or "{}"),
-            "computed_thresholds": row[4] if isinstance(row[4], dict) else json.loads(row[4] or "{}"),
-            "last_computed": row[5].isoformat() if row[5] else None,
-            "schema": schema_context,
-        }
-
-    async def _get_thresholds(
-        self,
-        db: AsyncSession,
-        user_id: str,
-        terms: List[str]
-    ) -> Dict[str, Any]:
-        """Get computed thresholds for semantic terms."""
-
-        context = await self._get_context(db, user_id)
-        thresholds = context.get("computed_thresholds", {})
-        numeric_stats = context.get("numeric_stats", {})
-
-        result = {"definitions": {}}
-
-        for term in terms:
-            term_lower = term.lower()
-            if "high" in term_lower and "value" in term_lower:
-                if thresholds.get("high_value_aum"):
-                    result["definitions"][term] = {
-                        "field": "aum",
-                        "operator": ">=",
-                        "value": thresholds["high_value_aum"],
-                        "description": f"Top 10% of clients by AUM (>= ${thresholds['high_value_aum']:,.0f})"
-                    }
-            elif "medium" in term_lower or "mid" in term_lower:
-                if thresholds.get("medium_value_aum"):
-                    result["definitions"][term] = {
-                        "field": "aum",
-                        "operator": ">=",
-                        "value": thresholds["medium_value_aum"],
-                        "description": f"Above median AUM (>= ${thresholds['medium_value_aum']:,.0f})"
-                    }
-            elif "recent" in term_lower:
-                result["definitions"][term] = {
-                    "field": "created_at",
-                    "operator": ">=",
-                    "value": "NOW() - INTERVAL '90 days'",
-                    "description": "Clients added in the last 90 days"
-                }
-
-        result["all_thresholds"] = thresholds
-        result["available_stats"] = list(numeric_stats.keys())
-
-        return result
-
-    async def _get_field_stats(
-        self,
-        db: AsyncSession,
-        user_id: str,
-        fields: List[str]
-    ) -> Dict[str, Any]:
-        """Get statistics for specific fields."""
-
-        context = await self._get_context(db, user_id)
-
-        result = {"fields": {}}
-
-        for field in fields:
-            field_lower = field.lower()
-
-            # Check completeness
-            completeness = context.get("field_completeness", {})
-            if field_lower in completeness:
-                result["fields"][field] = {
-                    "completeness": completeness[field_lower],
-                    "description": f"{completeness[field_lower]}% of records have {field} data"
-                }
-
-            # Check numeric stats
-            numeric = context.get("numeric_stats", {})
-            if field_lower in numeric:
-                stats = numeric[field_lower]
-                result["fields"][field] = {
-                    **result["fields"].get(field, {}),
-                    "stats": stats,
-                    "description": f"Range: {stats.get('min', 'N/A')} to {stats.get('max', 'N/A')}, Avg: {stats.get('avg', 'N/A')}"
-                }
-
-        result["total_clients"] = context.get("total_clients", 0)
-
-        return result
+        if row and row[0]:
+            return row[0] if isinstance(row[0], dict) else json.loads(row[0])
+        return None
 
 
-# Function to get context for orchestrator
-async def get_data_context_for_planning(
-    db: AsyncSession,
-    user_id: str
-) -> Dict[str, Any]:
+# Utility function for other modules to get semantic context
+async def get_semantic_context(db: AsyncSession, data_source_id: str) -> Dict[str, Any]:
     """
-    Helper function for orchestrator to quickly get data context.
-    Returns a summary suitable for including in planning prompts.
+    Helper function to get semantic profile for a data source.
+    Can be called by orchestrator or other agents.
     """
-    agent = DataDiscoveryAgent()
-    context = await agent._get_context(db, user_id)
+    result = await db.execute(
+        text("""
+            SELECT
+                metadata->'semantic_profile' as profile,
+                metadata->'detected_types' as types,
+                metadata->'columns' as columns,
+                file_name
+            FROM uploaded_files
+            WHERE id = :data_source_id
+        """),
+        {"data_source_id": data_source_id}
+    )
+    row = result.fetchone()
 
-    # Format for planning prompt
-    summary = f"""
-DATA CONTEXT FOR USER:
-- Total Clients: {context.get('total_clients', 0)}
-- Data Sources: {context.get('sources', {})}
-- Field Completeness: {context.get('field_completeness', {})}
-"""
+    if not row:
+        return {"error": "Data source not found"}
 
-    # Add schema info
-    schema = context.get('schema', {})
-    if schema.get('has_schema'):
-        summary += "\nDISCOVERED FIELDS:\n"
-        numeric = [f["name"] for f in schema.get("numeric_fields", [])]
-        text = [f["name"] for f in schema.get("text_fields", [])]
-        if numeric:
-            summary += f"- Numeric (use SQL Analytics): {', '.join(numeric)}\n"
-        if text:
-            summary += f"- Text (use Semantic Search): {', '.join(text)}\n"
-
-    thresholds = context.get('computed_thresholds', {})
-    if thresholds:
-        summary += f"""
-SEMANTIC THRESHOLDS (based on user's actual data):
-"""
-        if thresholds.get('high_value_aum'):
-            summary += f"- 'High value' clients = AUM >= ${thresholds['high_value_aum']:,.0f} (top 10%)\n"
-        if thresholds.get('medium_value_aum'):
-            summary += f"- 'Medium value' clients = AUM >= ${thresholds['medium_value_aum']:,.0f} (top 50%)\n"
+    profile = row[0] if isinstance(row[0], dict) else json.loads(row[0] or "{}")
+    types = row[1] if isinstance(row[1], dict) else json.loads(row[1] or "{}")
+    columns = row[2] if isinstance(row[2], list) else json.loads(row[2] or "[]")
 
     return {
-        "summary": summary,
-        "context": context
+        "file_name": row[3],
+        "columns": columns,
+        "detected_types": types,
+        "semantic_profile": profile,
+        "has_profile": bool(profile)
     }

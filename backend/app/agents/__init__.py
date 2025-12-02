@@ -18,6 +18,7 @@ from app.agents.base import (
 # Import agents to trigger registration
 # Each @register_agent decorated class registers itself on import
 from app.agents.data_ingestion import DataIngestionAgent
+from app.agents.data_discovery import DataDiscoveryAgent
 
 __all__ = [
     # Base classes
@@ -31,4 +32,5 @@ __all__ = [
     "register_agent",
     # Agents
     "DataIngestionAgent",
+    "DataDiscoveryAgent",
 ]
