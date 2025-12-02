@@ -244,6 +244,8 @@ Respond JSON: {{"capability": "name", "parameters": {{}}}}"""
         """
         Detect data types for each column using pandas + heuristics.
         Returns type info for proper JSONB storage.
+
+        IMPORTANT: All values must be Python native types (not numpy) for JSON serialization.
         """
         detected_types = {}
 
@@ -253,7 +255,8 @@ Respond JSON: {{"capability": "name", "parameters": {{}}}}"""
                 detected_types[col] = {"type": "text", "nullable": True}
                 continue
 
-            nullable = df[col].isna().any()
+            # Convert numpy.bool_ to Python bool
+            nullable = bool(df[col].isna().any())
             sample_values = col_data.head(5).tolist()
 
             # Try numeric detection
