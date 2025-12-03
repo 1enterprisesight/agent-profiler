@@ -134,6 +134,9 @@ class SQLAnalyticsAgent(BaseAgent):
                 sql = query_info.get("sql")
                 purpose = query_info.get("purpose", "Query")
 
+                # Log the generated query for debugging
+                self.logger.info("generated_sql_query", purpose=purpose, sql=sql)
+
                 # Safety check
                 if not self._is_safe_query(sql):
                     self.logger.warning("unsafe_query_blocked", sql=sql[:100])
