@@ -243,6 +243,7 @@ IMPORTANT - USE FIELD MAPPINGS FOR QUERIES:
 - If mapping shows a direct column like "client_name", use it directly as a column
 - Cast to appropriate types when needed: (core_data->>'value')::numeric
 - Filter by data_source_id = '{data_context.get('data_source_id')}'
+- Always filter out NULL values: WHERE field IS NOT NULL (NULL data has no analytical value)
 
 If the request is unclear or you need more information to provide a good analysis, respond with:
 {{
