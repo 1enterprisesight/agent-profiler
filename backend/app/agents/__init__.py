@@ -19,6 +19,8 @@ from app.agents.base import (
 # Each @register_agent decorated class registers itself on import
 from app.agents.data_ingestion import DataIngestionAgent
 from app.agents.data_discovery import DataDiscoveryAgent
+from app.agents.sql_analytics import SQLAnalyticsAgent
+from app.agents.orchestrator import OrchestratorAgent
 
 __all__ = [
     # Base classes
@@ -33,4 +35,6 @@ __all__ = [
     # Agents
     "DataIngestionAgent",
     "DataDiscoveryAgent",
+    "SQLAnalyticsAgent",
+    "OrchestratorAgent",
 ]
