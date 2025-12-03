@@ -329,18 +329,28 @@ Return valid JSON only:
 
         profile["analyzed_at"] = datetime.utcnow().isoformat()
 
+        # Fetch current metadata
+        result = await db.execute(
+            text("SELECT metadata FROM uploaded_files WHERE id = :data_source_id"),
+            {"data_source_id": data_source_id}
+        )
+        row = result.fetchone()
+        current_metadata = row[0] if row and row[0] else {}
+        if isinstance(current_metadata, str):
+            current_metadata = json.loads(current_metadata)
+
+        # Update with semantic profile
+        current_metadata["semantic_profile"] = profile
+
+        # Write back
         await db.execute(
             text("""
                 UPDATE uploaded_files
-                SET metadata = jsonb_set(
-                    COALESCE(metadata, '{}'),
-                    '{semantic_profile}',
-                    :profile::jsonb
-                ),
-                updated_at = NOW()
+                SET metadata = :metadata,
+                    updated_at = NOW()
                 WHERE id = :data_source_id
             """),
-            {"data_source_id": data_source_id, "profile": json.dumps(profile)}
+            {"data_source_id": data_source_id, "metadata": json.dumps(current_metadata)}
         )
         await db.commit()
 
