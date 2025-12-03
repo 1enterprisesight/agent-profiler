@@ -445,6 +445,89 @@ class BaseAgent(ABC):
         """
         pass
 
+    async def get_data_context(
+        self,
+        db: AsyncSession,
+        data_source_id: Optional[str],
+        user_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get complete data context (schema + semantic profile) for a data source.
+
+        Shared method used by all agents to ensure consistent data understanding.
+
+        Args:
+            db: Database session
+            data_source_id: Specific data source ID, or None to get most recent
+            user_id: User ID for filtering
+
+        Returns:
+            Complete data context dict or None if not found:
+            {
+                "data_source_id": "uuid",
+                "file_name": "name.csv",
+                "row_count": 3480,
+                "columns": ["col1", "col2", ...],
+                "detected_types": {
+                    "col1": {"type": "text", "nullable": false, "sample_values": [...]},
+                    ...
+                },
+                "semantic_profile": {
+                    "domain": "healthcare",
+                    "domain_description": "...",
+                    "entity_name": "doctor",
+                    "entity_type": "person",
+                    "primary_key": "Doctor ID",
+                    "relationships": [...],
+                    "data_categories": {...},
+                    "field_descriptions": {...},
+                    "suggested_analyses": [...]
+                }
+            }
+        """
+        from sqlalchemy import text
+        import json
+
+        try:
+            if data_source_id:
+                result = await db.execute(
+                    text("""
+                        SELECT id, file_name, metadata
+                        FROM uploaded_files
+                        WHERE id = :data_source_id AND user_id = :user_id
+                    """),
+                    {"data_source_id": data_source_id, "user_id": user_id}
+                )
+            else:
+                result = await db.execute(
+                    text("""
+                        SELECT id, file_name, metadata
+                        FROM uploaded_files
+                        WHERE user_id = :user_id
+                        ORDER BY uploaded_at DESC LIMIT 1
+                    """),
+                    {"user_id": user_id}
+                )
+
+            row = result.fetchone()
+            if not row:
+                return None
+
+            metadata = row[2] if isinstance(row[2], dict) else json.loads(row[2] or "{}")
+
+            return {
+                "data_source_id": str(row[0]),
+                "file_name": row[1],
+                "row_count": metadata.get("rows", 0),
+                "columns": metadata.get("columns", []),
+                "detected_types": metadata.get("detected_types", {}),
+                "semantic_profile": metadata.get("semantic_profile", {})
+            }
+
+        except Exception as e:
+            self.logger.warning("failed_to_get_data_context", error=str(e))
+            return None
+
     async def log_llm_conversation(
         self,
         db: AsyncSession,

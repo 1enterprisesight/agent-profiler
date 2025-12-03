@@ -100,15 +100,10 @@ class OrchestratorAgent(BaseAgent):
             # Get conversation history
             history = await self._get_conversation_history(db, session_id)
 
-            # Get data context if available
-            data_context = None
-            if data_source_id:
-                data_context = await self._get_data_context(db, data_source_id, user_id)
-            elif not data_source_id:
-                # Try to get most recent data source for user
-                data_context = await self._get_data_context(db, None, user_id)
-                if data_context and "data_source_id" in data_context:
-                    data_source_id = data_context["data_source_id"]
+            # Get data context if available (uses shared BaseAgent method)
+            data_context = await self.get_data_context(db, data_source_id, user_id)
+            if data_context and "data_source_id" in data_context:
+                data_source_id = data_context["data_source_id"]
 
             # Get available agents from registry
             available_agents = AgentRegistry.get_registry_schema()
@@ -141,6 +136,26 @@ class OrchestratorAgent(BaseAgent):
                         "agent_activities": []
                     },
                     metadata={"type": "clarification"}
+                )
+
+            # Check if can answer directly from context
+            if interpretation.get("can_answer_directly"):
+                await emit(EventType.RESULT, "Answering from context", {}, 3)
+
+                direct_response = interpretation.get("response", "")
+
+                # Save messages to history
+                await self._save_message(db, session_id, user_id, "user", user_message)
+                await self._save_message(db, session_id, user_id, "assistant", direct_response)
+
+                return AgentResponse(
+                    status=AgentStatus.COMPLETED,
+                    result={
+                        "response": direct_response,
+                        "agent_activities": [],
+                        "answered_from_context": True
+                    },
+                    metadata={"type": "direct_response", "session_id": session_id}
                 )
 
             # Execute the plan
@@ -229,46 +244,7 @@ class OrchestratorAgent(BaseAgent):
             self.logger.warning("failed_to_get_history", error=str(e))
             return []
 
-    async def _get_data_context(self, db: AsyncSession, data_source_id: Optional[str], user_id: str) -> Optional[Dict]:
-        """Get data source context (schema + semantic profile)."""
-        try:
-            if data_source_id:
-                result = await db.execute(
-                    text("""
-                        SELECT id, file_name, metadata
-                        FROM uploaded_files
-                        WHERE id = :data_source_id
-                    """),
-                    {"data_source_id": data_source_id}
-                )
-            else:
-                result = await db.execute(
-                    text("""
-                        SELECT id, file_name, metadata
-                        FROM uploaded_files
-                        WHERE user_id = :user_id
-                        ORDER BY uploaded_at DESC LIMIT 1
-                    """),
-                    {"user_id": user_id}
-                )
-
-            row = result.fetchone()
-            if not row:
-                return None
-
-            metadata = row[2] if isinstance(row[2], dict) else json.loads(row[2] or "{}")
-
-            return {
-                "data_source_id": str(row[0]),
-                "file_name": row[1],
-                "columns": metadata.get("columns", []),
-                "detected_types": metadata.get("detected_types", {}),
-                "semantic_profile": metadata.get("semantic_profile", {}),
-                "row_count": metadata.get("rows", 0)
-            }
-        except Exception as e:
-            self.logger.warning("failed_to_get_data_context", error=str(e))
-            return None
+    # NOTE: Uses shared get_data_context() from BaseAgent
 
     async def _interpret_request(
         self,
@@ -286,13 +262,32 @@ class OrchestratorAgent(BaseAgent):
         if data_context:
             semantic = data_context.get("semantic_profile", {})
             data_str = f"""
-DATA SOURCE: {data_context.get('file_name')}
-ROWS: {data_context.get('row_count', 0)}
-ENTITY: {semantic.get('entity_name', 'unknown')} ({semantic.get('entity_type', 'unknown')})
-DOMAIN: {semantic.get('domain', 'unknown')} - {semantic.get('domain_description', '')}
-FIELDS: {', '.join(data_context.get('columns', [])[:20])}
-PERFORMANCE METRICS: {', '.join(semantic.get('data_categories', {}).get('performance_metrics', []))}
-SEGMENTATION FIELDS: {', '.join(semantic.get('data_categories', {}).get('segmentation', []))}
+=== DATA SOURCE ===
+File: {data_context.get('file_name')}
+Total Rows: {data_context.get('row_count', 0)}
+
+=== SCHEMA ===
+Columns and Types:
+{json.dumps(data_context.get('detected_types', {}), indent=2)}
+
+=== SEMANTIC PROFILE ===
+Domain: {semantic.get('domain', 'unknown')}
+Domain Description: {semantic.get('domain_description', '')}
+
+Entity: {semantic.get('entity_name', 'unknown')} ({semantic.get('entity_type', 'unknown')})
+Primary Key: {semantic.get('primary_key', 'unknown')}
+
+Relationships:
+{json.dumps(semantic.get('relationships', []), indent=2)}
+
+Data Categories:
+{json.dumps(semantic.get('data_categories', {}), indent=2)}
+
+Field Descriptions:
+{json.dumps(semantic.get('field_descriptions', {}), indent=2)}
+
+Suggested Analyses:
+{json.dumps(semantic.get('suggested_analyses', []), indent=2)}
 """
 
         agents_str = "\n".join([
@@ -300,10 +295,7 @@ SEGMENTATION FIELDS: {', '.join(semantic.get('data_categories', {}).get('segment
             for a in available_agents
         ])
 
-        prompt = f"""You are an intelligent data analysis orchestrator. Your job is to:
-1. Understand the user's request in context of the conversation
-2. Determine if you need clarification to provide a good analysis
-3. If clear, create a plan using available agents
+        prompt = f"""You are an intelligent data analysis orchestrator.
 
 CONVERSATION HISTORY:
 {history_str}
@@ -316,24 +308,21 @@ CURRENT USER MESSAGE:
 AVAILABLE AGENTS:
 {agents_str}
 
-INSTRUCTIONS:
-- If the request is unclear, ambiguous, or you need more context to provide valuable analysis, ask a clarifying question
-- If clear, decompose into tasks for the available agents
-- Focus on delivering insightful analysis, not just raw data
-- Consider what supporting data would make the analysis more valuable
+You have the full schema and semantic profile of the data source above.
+If this context is sufficient to answer the user's query, respond directly.
+If you need to query or compute against the actual data rows, route to the appropriate agent.
 
 Respond with JSON:
 
-If clarification needed:
+If you can answer directly from the context above:
 {{
-  "needs_clarification": true,
-  "clarification_question": "Your question to better understand what they want",
-  "reason": "Why you need this information"
+  "can_answer_directly": true,
+  "response": "Your direct answer using the schema and semantic profile provided above"
 }}
 
-If ready to execute:
+If you need to query/analyze actual data rows:
 {{
-  "needs_clarification": false,
+  "can_answer_directly": false,
   "understanding": "Your interpretation of what the user wants",
   "analysis_approach": "How you plan to analyze this",
   "tasks": [
@@ -342,6 +331,13 @@ If ready to execute:
       "request": "Specific task for this agent"
     }}
   ]
+}}
+
+If clarification is truly needed:
+{{
+  "needs_clarification": true,
+  "clarification_question": "Your question to better understand what they want",
+  "reason": "Why you need this information"
 }}
 
 Return valid JSON only."""

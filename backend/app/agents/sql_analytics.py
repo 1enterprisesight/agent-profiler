@@ -95,14 +95,14 @@ class SQLAnalyticsAgent(BaseAgent):
             await emit(EventType.RECEIVED, "Received analytics request",
                       {"request": request[:100]}, 1)
 
-            # Get data source context (schema + semantic profile)
+            # Get data source context (schema + semantic profile) - uses shared BaseAgent method
             await emit(EventType.THINKING, "Loading data context", {}, 2)
 
-            data_context = await self._get_data_context(db, data_source_id, user_id)
-            if "error" in data_context:
+            data_context = await self.get_data_context(db, data_source_id, user_id)
+            if not data_context:
                 return AgentResponse(
                     status=AgentStatus.FAILED,
-                    result={"error": data_context["error"]},
+                    result={"error": "No data source found"},
                     metadata={}
                 )
 
@@ -199,49 +199,7 @@ class SQLAnalyticsAgent(BaseAgent):
                 metadata={}
             )
 
-    async def _get_data_context(self, db: AsyncSession, data_source_id: str, user_id: str) -> Dict:
-        """Get schema and semantic profile for data source."""
-
-        # If no data_source_id, get most recent for user
-        if not data_source_id:
-            result = await db.execute(
-                text("""
-                    SELECT id, file_name, metadata
-                    FROM uploaded_files
-                    WHERE user_id = :user_id
-                    ORDER BY uploaded_at DESC LIMIT 1
-                """),
-                {"user_id": user_id}
-            )
-            row = result.fetchone()
-            if not row:
-                return {"error": "No data sources found"}
-            data_source_id = str(row[0])
-            file_name = row[1]
-            metadata = row[2] if isinstance(row[2], dict) else json.loads(row[2] or "{}")
-        else:
-            result = await db.execute(
-                text("""
-                    SELECT file_name, metadata
-                    FROM uploaded_files
-                    WHERE id = :data_source_id
-                """),
-                {"data_source_id": data_source_id}
-            )
-            row = result.fetchone()
-            if not row:
-                return {"error": f"Data source {data_source_id} not found"}
-            file_name = row[0]
-            metadata = row[1] if isinstance(row[1], dict) else json.loads(row[1] or "{}")
-
-        return {
-            "data_source_id": data_source_id,
-            "file_name": file_name,
-            "columns": metadata.get("columns", []),
-            "detected_types": metadata.get("detected_types", {}),
-            "semantic_profile": metadata.get("semantic_profile", {}),
-            "row_count": metadata.get("rows", 0)
-        }
+    # NOTE: Uses shared get_data_context() from BaseAgent
 
     async def _plan_queries(self, request: str, data_context: Dict, additional_context: str) -> Dict:
         """LLM plans what queries to run based on request and data context."""
