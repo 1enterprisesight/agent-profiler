@@ -382,10 +382,14 @@ class BaseAgent(ABC):
                     error=f"Agent execution exceeded {settings.agent_timeout_seconds}s timeout"
                 )
 
-            # Update activity log with results
+            # Update activity log with metadata summary (not full results to avoid JSONB serialization issues)
             end_time = datetime.utcnow()
             activity_log.status = response.status.value
-            activity_log.output_data = response.result
+            activity_log.output_data = {
+                "status": "completed",
+                "result_keys": list(response.result.keys()) if response.result else [],
+                "has_data": bool(response.result)
+            }
             activity_log.meta_data = {"error": response.error} if response.error else None
             activity_log.completed_at = end_time
             activity_log.duration_ms = int((end_time - start_time).total_seconds() * 1000)
