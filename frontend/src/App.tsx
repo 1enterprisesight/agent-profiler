@@ -32,7 +32,7 @@ function App() {
 
   const loadDataSources = async () => {
     try {
-      const response = await api.get('/api/uploads/history');
+      const response = await api.get('/uploads/history');
       const sources = response.data.uploads || [];
       setDataSources(sources);
 

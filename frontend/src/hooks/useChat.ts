@@ -85,7 +85,7 @@ export function useChat() {
     }));
 
     try {
-      const response = await api.post('/api/chat/message', {
+      const response = await api.post('/chat/message', {
         message: content.trim(),
         session_id: sessionId,
         data_source_id: dataSourceId,
@@ -149,7 +149,7 @@ export function useChat() {
     if (!isAuthenticated) return;
 
     try {
-      const response = await api.get(`/api/chat/sessions/${sessionId}/messages`);
+      const response = await api.get(`/chat/sessions/${sessionId}/messages`);
       const messages: Message[] = response.data.map((m: any) => ({
         id: m.id,
         role: m.role,
@@ -178,7 +178,7 @@ export function useChat() {
     if (!isAuthenticated) return [];
 
     try {
-      const response = await api.get('/api/chat/sessions');
+      const response = await api.get('/chat/sessions');
       return response.data;
     } catch (error) {
       console.error('Failed to get sessions:', error);
