@@ -346,8 +346,7 @@ Return valid JSON only:
         await db.execute(
             text("""
                 UPDATE uploaded_files
-                SET metadata = :metadata,
-                    updated_at = NOW()
+                SET metadata = :metadata
                 WHERE id = :data_source_id
             """),
             {"data_source_id": data_source_id, "metadata": json.dumps(current_metadata)}
