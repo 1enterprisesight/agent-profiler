@@ -521,7 +521,8 @@ class BaseAgent(ABC):
                 "row_count": metadata.get("rows", 0),
                 "columns": metadata.get("columns", []),
                 "detected_types": metadata.get("detected_types", {}),
-                "semantic_profile": metadata.get("semantic_profile", {})
+                "semantic_profile": metadata.get("semantic_profile", {}),
+                "field_mappings": metadata.get("field_mappings", {})
             }
 
         except Exception as e:

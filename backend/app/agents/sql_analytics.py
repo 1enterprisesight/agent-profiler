@@ -220,13 +220,18 @@ SEMANTIC PROFILE:
 - Categories: {json.dumps(data_context.get('semantic_profile', {}).get('data_categories', {}), indent=2)}
 - Field Descriptions: {json.dumps(data_context.get('semantic_profile', {}).get('field_descriptions', {}), indent=2)}
 
+FIELD MAPPINGS (original column name → actual storage path):
+{json.dumps(data_context.get('field_mappings', {}), indent=2)}
+
 {f"ADDITIONAL CONTEXT: {additional_context}" if additional_context else ""}
 
-IMPORTANT:
+IMPORTANT - USE FIELD MAPPINGS FOR QUERIES:
 - Data is stored in the 'clients' table
-- Each row's data is in JSONB columns: core_data and custom_data
-- Access fields like: (core_data->>'field_name') or (custom_data->>'field_name')
-- Cast to appropriate types: (core_data->>'field_name')::numeric
+- Use the FIELD MAPPINGS above to translate column names to actual storage paths
+- If mapping shows "core_data.xyz", use: (core_data->>'xyz')
+- If mapping shows "custom_data.xyz", use: (custom_data->>'xyz')
+- If mapping shows a direct column like "client_name", use it directly as a column
+- Cast to appropriate types when needed: (core_data->>'value')::numeric
 - Filter by data_source_id = '{data_context.get('data_source_id')}'
 
 If the request is unclear or you need more information to provide a good analysis, respond with:
