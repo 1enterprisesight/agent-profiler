@@ -207,12 +207,20 @@ class SQLAnalyticsAgent(BaseAgent):
     async def _plan_queries(self, request: str, data_context: Dict, additional_context: str) -> Dict:
         """LLM plans what queries to run based on request and data context."""
 
-        # Simplify field_mappings for LLM - extract just column -> target path
+        # Convert field_mappings to exact SQL expressions - no interpretation needed
         raw_mappings = data_context.get('field_mappings', {})
-        simplified_mappings = {
-            col: mapping.get('target', '') if isinstance(mapping, dict) else mapping
-            for col, mapping in raw_mappings.items()
-        }
+        sql_expressions = {}
+        for col, mapping in raw_mappings.items():
+            target = mapping.get('target', '') if isinstance(mapping, dict) else mapping
+            if target.startswith('core_data.'):
+                key = target.replace('core_data.', '')
+                sql_expressions[col] = f"(core_data->>'{key}')"
+            elif target.startswith('custom_data.'):
+                key = target.replace('custom_data.', '')
+                sql_expressions[col] = f"(custom_data->>'{key}')"
+            else:
+                # Direct column reference
+                sql_expressions[col] = target
 
         prompt = f"""You are a data analyst generating PostgreSQL queries.
 
@@ -230,25 +238,20 @@ Domain: {data_context.get('semantic_profile', {}).get('domain', 'unknown')}
 === FIELD DESCRIPTIONS (semantic meaning of each column) ===
 {json.dumps(data_context.get('semantic_profile', {}).get('field_descriptions', {}), indent=2)}
 
-=== SQL ACCESS PATHS (how to query each column) ===
-Data is stored in table 'clients'. The logical column names above are NOT database columns.
-Each logical column maps to an SQL expression below:
-{json.dumps(simplified_mappings, indent=2)}
+=== SQL EXPRESSIONS (copy these exactly) ===
+Data is stored in table 'clients'. Use these exact SQL expressions for each column:
+{json.dumps(sql_expressions, indent=2)}
 
-Path format rules:
-- "core_data.X" → SQL: (core_data->>'X')
-- "custom_data.X" → SQL: (custom_data->>'X')
-- Direct column name → SQL: use as-is
+IMPORTANT: Copy these expressions exactly as shown. Do not modify them.
 
 {f"ADDITIONAL CONTEXT: {additional_context}" if additional_context else ""}
 
 === QUERY GENERATION RULES ===
 1. Map user terms to logical columns using FIELD DESCRIPTIONS
-2. Look up each logical column in SQL ACCESS PATHS to get the SQL expression
-3. Use ONLY those SQL expressions - logical column names will cause errors
-4. Cast numeric columns: (path->>'field')::numeric for math operations
-5. Required filter: WHERE data_source_id = '{data_context.get('data_source_id')}'
-6. Filter nulls on analyzed columns: AND (path->>'field') IS NOT NULL
+2. Copy the exact SQL expression from SQL EXPRESSIONS section
+3. For numeric operations, cast with ::numeric (e.g., (core_data->>'value')::numeric)
+4. Required filter: WHERE data_source_id = '{data_context.get('data_source_id')}'
+5. Filter nulls on analyzed columns
 
 If the request is unclear or you need more information to provide a good analysis, respond with:
 {{
