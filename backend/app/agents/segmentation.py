@@ -1,9 +1,9 @@
 """
-SQL Analytics Agent
+Segmentation Agent
 
-LLM-powered agent that analyzes structured data using SQL.
-Uses Gemini to understand requests, schema, and semantic context
-to generate comprehensive queries and insights.
+LLM-powered agent that groups and segments entities based on
+characteristics and values. Creates actionable segments for business decisions.
+Uses Gemini to understand data patterns and create meaningful groupings.
 """
 
 from typing import Dict, Any, List, Optional
@@ -20,34 +20,35 @@ from app.config import settings
 
 
 @register_agent
-class SQLAnalyticsAgent(BaseAgent):
+class SegmentationAgent(BaseAgent):
     """
-    Analyzes structured data using SQL queries.
-    LLM interprets requests and generates queries based on
-    schema and semantic understanding of the data.
+    Groups and segments entities into meaningful categories.
+    LLM determines segmentation strategies based on data context
+    and generates queries for value tiers, categories, and clusters.
     """
 
     @classmethod
     def get_agent_info(cls) -> Dict[str, Any]:
         """Agent metadata for orchestrator's dynamic routing."""
         return {
-            "name": "sql_analytics",
-            "description": "Analyzes structured data using SQL queries to answer quantitative questions",
+            "name": "segmentation",
+            "description": "Groups and segments entities into meaningful categories based on characteristics and values",
             "capabilities": [
-                "Execute analytical queries against structured client data",
-                "Aggregate, filter, group, and compare data",
-                "Calculate statistics and distributions",
-                "Provide data-backed insights and supporting evidence",
-                "Return results suitable for visualization"
+                "Segment entities by value tiers (high/medium/low based on percentiles)",
+                "Group data by categorical attributes (region, type, category)",
+                "Identify natural clusters and groupings in the data",
+                "Calculate segment sizes, percentages, and distributions",
+                "Provide segment profiles with key characteristics (averages, totals)"
             ],
             "inputs": {
-                "request": "The analytical question or task from orchestrator",
+                "request": "The segmentation request from orchestrator",
                 "data_source_id": "ID of the data source to analyze",
-                "context": "Additional context from conversation (optional)"
+                "context": "Additional context from conversation (optional)",
+                "previous_results": "Results from prior agents (optional)"
             },
             "outputs": {
-                "results": "Query results as structured data",
-                "insights": "LLM-generated interpretation of findings",
+                "results": "Segment data as structured results",
+                "insights": "LLM-generated segment interpretation",
                 "queries_executed": "SQL queries that were run",
                 "visualization_hint": "Suggested visualization type"
             }
@@ -67,7 +68,7 @@ class SQLAnalyticsAgent(BaseAgent):
         db: AsyncSession,
         user_id: str
     ) -> AgentResponse:
-        """Execute SQL analytics - LLM-driven query generation and insight."""
+        """Execute segmentation analysis - LLM-driven grouping and categorization."""
 
         start_time = datetime.utcnow()
         conversation_id = message.conversation_id
@@ -75,6 +76,7 @@ class SQLAnalyticsAgent(BaseAgent):
         request = payload.get("request", "")
         data_source_id = payload.get("data_source_id")
         additional_context = payload.get("context", "")
+        previous_results = payload.get("previous_results", [])
         skip_events = payload.get("skip_transparency_events", False)
 
         # Helper for events
@@ -92,7 +94,7 @@ class SQLAnalyticsAgent(BaseAgent):
             )
 
         try:
-            await emit(EventType.RECEIVED, "Received analytics request",
+            await emit(EventType.RECEIVED, "Received segmentation request",
                       {"request": request[:100]}, 1)
 
             # Get data source context (schema + semantic profile) - uses shared BaseAgent method
@@ -106,11 +108,11 @@ class SQLAnalyticsAgent(BaseAgent):
                     metadata={}
                 )
 
-            # LLM analyzes request and generates query plan
-            await emit(EventType.THINKING, "Analyzing request and planning queries",
+            # LLM analyzes request and generates segmentation queries
+            await emit(EventType.THINKING, "Analyzing segmentation strategy",
                       {"columns_available": len(data_context.get("columns", []))}, 3)
 
-            query_plan = await self._plan_queries(request, data_context, additional_context)
+            query_plan = await self._plan_queries(request, data_context, additional_context, previous_results)
 
             if query_plan.get("needs_clarification"):
                 return AgentResponse(
@@ -124,7 +126,7 @@ class SQLAnalyticsAgent(BaseAgent):
                 )
 
             # Execute queries
-            await emit(EventType.ACTION, f"Executing {len(query_plan.get('queries', []))} queries",
+            await emit(EventType.ACTION, f"Executing {len(query_plan.get('queries', []))} segmentation queries",
                       {"query_count": len(query_plan.get("queries", []))}, 4)
 
             all_results = []
@@ -135,7 +137,7 @@ class SQLAnalyticsAgent(BaseAgent):
                 purpose = query_info.get("purpose", "Query")
 
                 # Log the generated query for debugging
-                self.logger.info("generated_sql_query", purpose=purpose, sql=sql)
+                self.logger.info("generated_segmentation_query", purpose=purpose, sql=sql)
 
                 # Safety check
                 if not self._is_safe_query(sql):
@@ -164,8 +166,8 @@ class SQLAnalyticsAgent(BaseAgent):
                     })
                     queries_executed.append({"sql": sql, "purpose": purpose})
 
-            # LLM synthesizes insights from results
-            await emit(EventType.THINKING, "Synthesizing insights from data",
+            # LLM synthesizes insights from segmentation results
+            await emit(EventType.THINKING, "Synthesizing segment insights",
                       {"result_sets": len(all_results)}, 5)
 
             insights = await self._synthesize_insights(
@@ -174,7 +176,7 @@ class SQLAnalyticsAgent(BaseAgent):
 
             duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
-            await emit(EventType.RESULT, "Analysis complete",
+            await emit(EventType.RESULT, "Segmentation complete",
                       {"insight_preview": insights.get("summary", "")[:200]}, 6)
 
             return AgentResponse(
@@ -183,7 +185,7 @@ class SQLAnalyticsAgent(BaseAgent):
                     "results": all_results,
                     "insights": insights,
                     "queries_executed": queries_executed,
-                    "visualization_hint": insights.get("visualization_hint", "table")
+                    "visualization_hint": insights.get("visualization_hint", "bar")
                 },
                 metadata={
                     "duration_ms": duration_ms,
@@ -193,7 +195,7 @@ class SQLAnalyticsAgent(BaseAgent):
             )
 
         except Exception as e:
-            await emit(EventType.ERROR, f"Analysis failed: {str(e)[:100]}",
+            await emit(EventType.ERROR, f"Segmentation failed: {str(e)[:100]}",
                       {"error": str(e)}, 99)
 
             return AgentResponse(
@@ -202,12 +204,8 @@ class SQLAnalyticsAgent(BaseAgent):
                 metadata={}
             )
 
-    # NOTE: Uses shared get_data_context() from BaseAgent
-
-    async def _plan_queries(self, request: str, data_context: Dict, additional_context: str) -> Dict:
-        """LLM plans what queries to run based on request and data context."""
-
-        # Convert field_mappings to exact SQL expressions - no interpretation needed
+    def _build_sql_expressions(self, data_context: Dict) -> Dict[str, str]:
+        """Convert field_mappings to exact SQL expressions."""
         raw_mappings = data_context.get('field_mappings', {})
         sql_expressions = {}
         for col, mapping in raw_mappings.items():
@@ -219,10 +217,25 @@ class SQLAnalyticsAgent(BaseAgent):
                 key = target.replace('custom_data.', '')
                 sql_expressions[col] = f"(custom_data->>'{key}')"
             else:
-                # Direct column reference
                 sql_expressions[col] = target
+        return sql_expressions
 
-        prompt = f"""You are a data analyst generating PostgreSQL queries.
+    async def _plan_queries(self, request: str, data_context: Dict, additional_context: str, previous_results: List[Dict] = None) -> Dict:
+        """LLM plans segmentation queries based on request and data context."""
+
+        sql_expressions = self._build_sql_expressions(data_context)
+
+        # Prepare previous results summary if available
+        previous_results_summary = []
+        if previous_results:
+            for pr in previous_results:
+                previous_results_summary.append({
+                    "agent": pr.get("agent"),
+                    "task": pr.get("task"),
+                    "summary": pr.get("result", {}).get("insights", {}).get("summary", "")[:200]
+                })
+
+        prompt = f"""You are a data segmentation analyst generating PostgreSQL queries.
 
 REQUEST: {request}
 
@@ -244,6 +257,9 @@ Data is stored in table 'clients'. Use these exact SQL expressions for each colu
 
 IMPORTANT: Copy these expressions exactly as shown. Do not modify them.
 
+{f"=== PREVIOUS AGENT RESULTS ===" if previous_results_summary else ""}
+{json.dumps(previous_results_summary, indent=2) if previous_results_summary else ""}
+
 {f"ADDITIONAL CONTEXT: {additional_context}" if additional_context else ""}
 
 === QUERY GENERATION RULES ===
@@ -252,9 +268,30 @@ IMPORTANT: Copy these expressions exactly as shown. Do not modify them.
 3. For numeric operations, cast with ::numeric (e.g., (core_data->>'value')::numeric)
 4. Required filter: WHERE data_source_id = '{data_context.get('data_source_id')}'
 5. Filter nulls on analyzed columns
-6. CRITICAL: Always alias every column with AS using readable names (e.g., (core_data->>'area') AS region, COUNT(*) AS count)
+6. CRITICAL: Always alias every column with AS using readable names
 
-If the request is unclear or you need more information to provide a good analysis, respond with:
+=== SEGMENTATION-SPECIFIC INSTRUCTIONS ===
+Generate queries that create meaningful segments:
+
+1. **Value Tier Segmentation** (if numeric data available):
+   - Use percentiles to create tiers (e.g., top 20% = High, middle 60% = Medium, bottom 20% = Low)
+   - Use NTILE(3) or NTILE(4) for even distribution
+   - Or use subqueries with percentile_cont() for custom breakpoints
+
+2. **Categorical Grouping**:
+   - GROUP BY categorical columns (region, type, category)
+   - Include COUNT(*) for segment size
+   - Include SUM/AVG of key metrics per segment
+
+3. **Multi-dimensional Segments** (if appropriate):
+   - Combine multiple attributes (e.g., region + value tier)
+   - Create cross-tabulations
+
+4. **Segment Profiles**:
+   - For each segment, calculate key characteristics
+   - Include percentages of total
+
+If the request is unclear, respond with:
 {{
   "needs_clarification": true,
   "clarification_question": "Your question to the user",
@@ -264,19 +301,15 @@ If the request is unclear or you need more information to provide a good analysi
 Otherwise, respond with a query plan:
 {{
   "needs_clarification": false,
-  "understanding": "Your interpretation of what's being asked",
+  "understanding": "Your interpretation of the segmentation request",
+  "segmentation_approach": "Brief description of how you'll segment the data",
   "queries": [
     {{
-      "purpose": "What this query answers",
+      "purpose": "What segment this query creates or profiles",
       "sql": "SELECT ... FROM clients WHERE data_source_id = '...' ..."
     }}
   ]
 }}
-
-Generate queries that:
-1. Directly answer the core request
-2. Provide supporting statistics that add value
-3. Surface interesting patterns relevant to the question
 
 Return valid JSON only."""
 
@@ -296,8 +329,8 @@ Return valid JSON only."""
             return json.loads(response_text.strip())
 
         except Exception as e:
-            self.logger.error("query_planning_error", error=str(e))
-            return {"needs_clarification": True, "clarification_question": "Could you rephrase your question?", "reason": str(e)}
+            self.logger.error("segmentation_query_planning_error", error=str(e))
+            return {"needs_clarification": True, "clarification_question": "Could you rephrase your segmentation request?", "reason": str(e)}
 
     def _is_safe_query(self, sql: str) -> bool:
         """Check if query is safe to execute (read-only)."""
@@ -347,7 +380,7 @@ Return valid JSON only."""
 
         except Exception as e:
             error_msg = str(e)
-            self.logger.warning("analytics_query_failed", error=error_msg[:200])
+            self.logger.warning("segmentation_query_failed", error=error_msg[:200])
             return {"error": error_msg}
 
         finally:
@@ -404,11 +437,11 @@ Return ONLY the corrected SQL query, no explanation."""
             return corrected.strip()
 
         except Exception as e:
-            self.logger.error("query_correction_error", error=str(e))
+            self.logger.error("segmentation_query_correction_error", error=str(e))
             return None
 
     async def _synthesize_insights(self, request: str, data_context: Dict, results: List[Dict], additional_context: str) -> Dict:
-        """LLM synthesizes insights from query results."""
+        """LLM synthesizes segmentation insights from query results."""
 
         # Prepare results summary for LLM
         results_summary = []
@@ -416,39 +449,47 @@ Return ONLY the corrected SQL query, no explanation."""
             results_summary.append({
                 "purpose": r.get("purpose"),
                 "row_count": r.get("row_count"),
-                "sample_data": r.get("data", [])[:10]  # First 10 rows
+                "sample_data": r.get("data", [])[:15]  # First 15 rows for segments
             })
 
-        prompt = f"""You are a data analyst. Synthesize insights from these query results.
+        prompt = f"""You are a segmentation analyst. Synthesize insights from these segmentation results.
 
 ORIGINAL REQUEST: {request}
 
 DATA CONTEXT:
 - Entity: {data_context.get('semantic_profile', {}).get('entity_name', 'record')}
 - Domain: {data_context.get('semantic_profile', {}).get('domain', 'unknown')}
+- Total Records: {data_context.get('row_count', 0)}
 
-QUERY RESULTS:
+SEGMENTATION RESULTS:
 {json.dumps(results_summary, indent=2, default=str)}
 
 {f"ADDITIONAL CONTEXT: {additional_context}" if additional_context else ""}
 
-Provide:
-1. A clear summary answering the original request
-2. Key findings backed by the data
-3. Any interesting patterns or insights you notice
-4. Suggested visualization type (bar, line, pie, table, or none)
+Provide segmentation-focused insights:
+1. A clear summary of the segments identified
+2. Key characteristics of each segment (size, value, distinguishing features)
+3. Business implications of the segmentation
+4. Suggested visualization type (bar, pie, table - segments are often best as bar or pie)
 
 Return valid JSON:
 {{
-  "summary": "Direct answer to the request with key numbers",
+  "summary": "Overview of segments identified with key numbers",
+  "segments": [
+    {{
+      "name": "Segment name",
+      "size": "Count or percentage",
+      "characteristics": "Key distinguishing features"
+    }}
+  ],
   "findings": [
-    "Finding 1 with specific data",
-    "Finding 2 with specific data"
+    "Key finding about segments",
+    "Another finding with data"
   ],
   "insights": [
-    "Insight or pattern noticed"
+    "Strategic insight or recommendation"
   ],
-  "visualization_hint": "bar|line|pie|table"
+  "visualization_hint": "bar|pie|table"
 }}"""
 
         try:
@@ -466,10 +507,11 @@ Return valid JSON:
             return json.loads(response_text.strip())
 
         except Exception as e:
-            self.logger.error("insight_synthesis_error", error=str(e))
+            self.logger.error("segmentation_insight_synthesis_error", error=str(e))
             return {
-                "summary": "Analysis completed but insight synthesis failed",
+                "summary": "Segmentation completed but insight synthesis failed",
+                "segments": [],
                 "findings": [],
                 "insights": [],
-                "visualization_hint": "table"
+                "visualization_hint": "bar"
             }

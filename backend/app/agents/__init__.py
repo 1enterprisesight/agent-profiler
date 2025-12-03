@@ -20,6 +20,8 @@ from app.agents.base import (
 from app.agents.data_ingestion import DataIngestionAgent
 from app.agents.data_discovery import DataDiscoveryAgent
 from app.agents.sql_analytics import SQLAnalyticsAgent
+from app.agents.segmentation import SegmentationAgent
+from app.agents.pattern_recognition import PatternRecognitionAgent
 from app.agents.orchestrator import OrchestratorAgent
 
 __all__ = [
@@ -36,5 +38,7 @@ __all__ = [
     "DataIngestionAgent",
     "DataDiscoveryAgent",
     "SQLAnalyticsAgent",
+    "SegmentationAgent",
+    "PatternRecognitionAgent",
     "OrchestratorAgent",
 ]

@@ -9,6 +9,8 @@ import { useState, useRef, useEffect } from 'react';
 import { Send, Loader2, Trash2, ChevronDown, ChevronUp, Bot, User } from 'lucide-react';
 import { useChat, Message, AgentActivity } from '../hooks/useChat';
 import { clsx } from 'clsx';
+import { AgentNetworkDiagram } from './AgentNetworkDiagram';
+import { AnalysisResultsPanel } from './AnalysisResultsPanel';
 
 interface ChatInterfaceProps {
   dataSourceId?: string;
@@ -57,87 +59,103 @@ export function ChatInterface({ dataSourceId }: ChatInterfaceProps) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-900 rounded-lg border border-slate-700">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
-        <div className="flex items-center gap-2">
-          <Bot className="w-5 h-5 text-primary-400" />
-          <h2 className="text-sm font-semibold text-white">Data Analysis Chat</h2>
-        </div>
-        {messages.length > 0 && (
-          <button
-            onClick={clearChat}
-            className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
-            title="Clear chat"
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
-        )}
-      </div>
-
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-[300px] max-h-[500px]">
-        {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <Bot className="w-12 h-12 text-slate-600 mb-4" />
-            <p className="text-slate-400 text-sm">
-              Ask me anything about your data.
-            </p>
-            <p className="text-slate-500 text-xs mt-2">
-              I'll analyze it and provide detailed insights.
-            </p>
+    <div className="flex flex-col gap-4">
+      {/* Chat Conversation Box - Pinned at top */}
+      <div className="bg-slate-900 rounded-lg border border-slate-700">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-700">
+          <div className="flex items-center gap-2">
+            <Bot className="w-5 h-5 text-primary-400" />
+            <h2 className="text-sm font-semibold text-white">Data Analysis Chat</h2>
           </div>
-        ) : (
-          messages.map((message) => (
-            <MessageBubble key={message.id} message={message} />
-          ))
+          {messages.length > 0 && (
+            <button
+              onClick={clearChat}
+              className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded transition-colors"
+              title="Clear chat"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Messages */}
+        <div className="overflow-y-auto p-4 space-y-4 min-h-[150px] max-h-[300px]">
+          {messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center py-8">
+              <Bot className="w-10 h-10 text-slate-600 mb-3" />
+              <p className="text-slate-400 text-sm">
+                Ask me anything about your data.
+              </p>
+            </div>
+          ) : (
+            messages.map((message) => (
+              <MessageBubble key={message.id} message={message} />
+            ))
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="px-4 py-2 bg-red-900/50 border-t border-red-700">
+            <p className="text-red-300 text-sm">{error}</p>
+          </div>
         )}
-        <div ref={messagesEndRef} />
+
+        {/* Input */}
+        <form onSubmit={handleSubmit} className="p-4 border-t border-slate-700">
+          <div className="flex gap-2">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask about your data..."
+              className="flex-1 bg-slate-800 text-white placeholder-slate-500 rounded-lg px-4 py-3 resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm min-h-[48px] max-h-[200px]"
+              rows={1}
+              disabled={isLoading}
+            />
+            <button
+              type="submit"
+              disabled={!input.trim() || isLoading}
+              className={clsx(
+                'px-4 rounded-lg transition-colors flex items-center justify-center',
+                input.trim() && !isLoading
+                  ? 'bg-primary-500 hover:bg-primary-600 text-white'
+                  : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+              )}
+            >
+              {isLoading ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
+            </button>
+          </div>
+        </form>
       </div>
 
-      {/* Agent Activities */}
-      {agentActivities.length > 0 && (
-        <AgentActivitiesPanel activities={agentActivities} />
-      )}
-
-      {/* Error */}
-      {error && (
-        <div className="px-4 py-2 bg-red-900/50 border-t border-red-700">
-          <p className="text-red-300 text-sm">{error}</p>
-        </div>
-      )}
-
-      {/* Input */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-slate-700">
-        <div className="flex gap-2">
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Ask about your data..."
-            className="flex-1 bg-slate-800 text-white placeholder-slate-500 rounded-lg px-4 py-3 resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 text-sm min-h-[48px] max-h-[200px]"
-            rows={1}
-            disabled={isLoading}
+      {/* Results Section - Below Chat */}
+      {(isLoading || agentActivities.length > 0) && (
+        <div className="space-y-4">
+          {/* Agent Network Diagram */}
+          <AgentNetworkDiagram
+            isProcessing={isLoading}
+            agentActivities={agentActivities}
           />
-          <button
-            type="submit"
-            disabled={!input.trim() || isLoading}
-            className={clsx(
-              'px-4 rounded-lg transition-colors flex items-center justify-center',
-              input.trim() && !isLoading
-                ? 'bg-primary-500 hover:bg-primary-600 text-white'
-                : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-            )}
-          >
-            {isLoading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <Send className="w-5 h-5" />
-            )}
-          </button>
+
+          {/* Analysis Results Panel */}
+          {agentActivities.length > 0 && !isLoading && (
+            <AnalysisResultsPanel agentActivities={agentActivities} />
+          )}
+
+          {/* Agent Activities Details (collapsible) */}
+          {agentActivities.length > 0 && (
+            <AgentActivitiesPanel activities={agentActivities} />
+          )}
         </div>
-      </form>
+      )}
     </div>
   );
 }
@@ -175,18 +193,6 @@ function MessageBubble({ message }: { message: Message }) {
         ) : (
           <div className="text-sm whitespace-pre-wrap prose prose-invert prose-sm max-w-none">
             <MessageContent content={message.content} />
-          </div>
-        )}
-
-        {/* Visualization placeholder */}
-        {message.visualization && (
-          <div className="mt-3 p-3 bg-slate-900 rounded border border-slate-700">
-            <p className="text-xs text-slate-400 mb-2">
-              Visualization: {message.visualization.type}
-            </p>
-            <p className="text-xs text-slate-500">
-              {message.visualization.data?.length || 0} data points
-            </p>
           </div>
         )}
       </div>

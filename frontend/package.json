@@ -17,6 +17,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-flow-renderer": "^10.3.17",
+    "recharts": "^3.5.1",
     "tailwind-merge": "^2.2.0",
     "zustand": "^4.4.7"
   },
