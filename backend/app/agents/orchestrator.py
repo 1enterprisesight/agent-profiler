@@ -187,11 +187,15 @@ class OrchestratorAgent(BaseAgent):
                 user_message, interpretation, agent_results, data_context
             )
 
-            # Save messages to history
+            # Save messages to history (summary only - full results flow through system, not stored in logs)
             await self._save_message(db, session_id, user_id, "user", user_message)
+            agent_summary = [
+                {"agent": a.get("agent"), "task": a.get("task", "")[:100]}
+                for a in agent_results
+            ]
             await self._save_message(db, session_id, user_id, "assistant",
                                     final_response.get("response"),
-                                    {"agent_activities": agent_results})
+                                    {"agent_activities": agent_summary})
 
             duration_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
 
