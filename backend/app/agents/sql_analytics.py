@@ -142,18 +142,18 @@ class SQLAnalyticsAgent(BaseAgent):
                     self.logger.warning("unsafe_query_blocked", sql=sql[:100])
                     continue
 
-                result = await self._execute_query(db, sql, data_source_id)
+                result = await self._execute_query(db, sql, data_source_id, conversation_id)
 
                 if result.get("error"):
                     # Try self-correction
                     await emit(EventType.THINKING, f"Query error, attempting correction",
-                              {"error": result["error"][:100]}, 4 + i)
+                              {"error": result["error"][:100], "failed_sql": sql[:500]}, 4 + i)
 
                     corrected = await self._correct_query(
                         sql, result["error"], data_context
                     )
                     if corrected:
-                        result = await self._execute_query(db, corrected, data_source_id)
+                        result = await self._execute_query(db, corrected, data_source_id, conversation_id)
                         sql = corrected
 
                 if not result.get("error"):
@@ -214,36 +214,41 @@ class SQLAnalyticsAgent(BaseAgent):
             for col, mapping in raw_mappings.items()
         }
 
-        prompt = f"""You are a data analyst. Given a request and data context, plan SQL queries to answer it comprehensively.
+        prompt = f"""You are a data analyst generating PostgreSQL queries.
 
 REQUEST: {request}
 
-DATA SOURCE: {data_context.get('file_name')}
-TOTAL ROWS: {data_context.get('row_count', 0)}
+=== DATA SOURCE ===
+File: {data_context.get('file_name')}
+Rows: {data_context.get('row_count', 0)}
+Entity: {data_context.get('semantic_profile', {}).get('entity_name', 'unknown')}
+Domain: {data_context.get('semantic_profile', {}).get('domain', 'unknown')}
 
-SCHEMA (columns and types):
+=== LOGICAL COLUMNS (names, types, samples) ===
 {json.dumps(data_context.get('detected_types', {}), indent=2)}
 
-SEMANTIC PROFILE:
-- Entity: {data_context.get('semantic_profile', {}).get('entity_name', 'unknown')}
-- Domain: {data_context.get('semantic_profile', {}).get('domain', 'unknown')}
-- Categories: {json.dumps(data_context.get('semantic_profile', {}).get('data_categories', {}), indent=2)}
-- Field Descriptions: {json.dumps(data_context.get('semantic_profile', {}).get('field_descriptions', {}), indent=2)}
+=== FIELD DESCRIPTIONS (semantic meaning of each column) ===
+{json.dumps(data_context.get('semantic_profile', {}).get('field_descriptions', {}), indent=2)}
 
-FIELD MAPPINGS (original column name → actual storage path):
+=== SQL ACCESS PATHS (how to query each column) ===
+Data is stored in table 'clients'. The logical column names above are NOT database columns.
+Each logical column maps to an SQL expression below:
 {json.dumps(simplified_mappings, indent=2)}
+
+Path format rules:
+- "core_data.X" → SQL: (core_data->>'X')
+- "custom_data.X" → SQL: (custom_data->>'X')
+- Direct column name → SQL: use as-is
 
 {f"ADDITIONAL CONTEXT: {additional_context}" if additional_context else ""}
 
-IMPORTANT - USE FIELD MAPPINGS FOR QUERIES:
-- Data is stored in the 'clients' table
-- Use the FIELD MAPPINGS above to translate column names to actual storage paths
-- If mapping shows "core_data.xyz", use: (core_data->>'xyz')
-- If mapping shows "custom_data.xyz", use: (custom_data->>'xyz')
-- If mapping shows a direct column like "client_name", use it directly as a column
-- Cast to appropriate types when needed: (core_data->>'value')::numeric
-- Filter by data_source_id = '{data_context.get('data_source_id')}'
-- Always filter out NULL values: WHERE field IS NOT NULL (NULL data has no analytical value)
+=== QUERY GENERATION RULES ===
+1. Map user terms to logical columns using FIELD DESCRIPTIONS
+2. Look up each logical column in SQL ACCESS PATHS to get the SQL expression
+3. Use ONLY those SQL expressions - logical column names will cause errors
+4. Cast numeric columns: (path->>'field')::numeric for math operations
+5. Required filter: WHERE data_source_id = '{data_context.get('data_source_id')}'
+6. Filter nulls on analyzed columns: AND (path->>'field') IS NOT NULL
 
 If the request is unclear or you need more information to provide a good analysis, respond with:
 {{
@@ -298,29 +303,67 @@ Return valid JSON only."""
         dangerous = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "TRUNCATE", "CREATE", "GRANT", "REVOKE"]
         return not any(sql_upper.startswith(d) or f" {d} " in sql_upper for d in dangerous)
 
-    async def _execute_query(self, db: AsyncSession, sql: str, data_source_id: str) -> Dict:
-        """Execute a read-only SQL query with autocommit to avoid transaction issues."""
+    async def _execute_query(
+        self,
+        db: AsyncSession,
+        sql: str,
+        data_source_id: str,
+        session_id: str = None
+    ) -> Dict:
+        """Execute a read-only SQL query using autocommit connection."""
+        from app.database import engine
+        from app.models import SQLQueryLog
+        from app.config import settings
+        import uuid
+
+        start_time = datetime.utcnow()
+        error_msg = None
+        row_count = 0
+
         try:
-            # Use autocommit for read-only queries - failures won't abort the session's transaction
-            result = await db.execute(text(sql).execution_options(autocommit=True))
-            rows = result.fetchall()
-            columns = result.keys()
+            # Use raw connection with autocommit - no transaction, failures don't block
+            async with engine.connect() as conn:
+                result = await conn.execute(text(sql))
+                rows = result.fetchall()
+                columns = result.keys()
 
-            # Convert to list of dicts
-            data = [dict(zip(columns, row)) for row in rows]
+                # Convert to list of dicts
+                data = [dict(zip(columns, row)) for row in rows]
 
-            # Handle special types for JSON serialization
-            for row in data:
-                for key, value in row.items():
-                    if hasattr(value, 'isoformat'):
-                        row[key] = value.isoformat()
-                    elif isinstance(value, (bytes,)):
-                        row[key] = value.decode('utf-8', errors='replace')
+                # Handle special types for JSON serialization
+                for row in data:
+                    for key, value in row.items():
+                        if hasattr(value, 'isoformat'):
+                            row[key] = value.isoformat()
+                        elif isinstance(value, (bytes,)):
+                            row[key] = value.decode('utf-8', errors='replace')
 
-            return {"data": data, "row_count": len(data)}
+                row_count = len(data)
+                return {"data": data, "row_count": row_count}
 
         except Exception as e:
-            return {"error": str(e)}
+            error_msg = str(e)
+            self.logger.warning("analytics_query_failed", error=error_msg[:200])
+            return {"error": error_msg}
+
+        finally:
+            # Log query to sql_query_log table
+            if settings.enable_sql_query_logging and session_id:
+                try:
+                    execution_ms = int((datetime.utcnow() - start_time).total_seconds() * 1000)
+                    query_log = SQLQueryLog(
+                        id=uuid.uuid4(),
+                        session_id=session_id,
+                        agent_name=self.name,
+                        query_text=sql,
+                        result_summary={"row_count": row_count} if not error_msg else None,
+                        execution_time_ms=execution_ms,
+                        error=error_msg
+                    )
+                    db.add(query_log)
+                    await db.flush()
+                except Exception as log_err:
+                    self.logger.warning("failed_to_log_query", error=str(log_err)[:100])
 
     async def _correct_query(self, original_sql: str, error: str, data_context: Dict) -> Optional[str]:
         """LLM attempts to fix a failed query."""
