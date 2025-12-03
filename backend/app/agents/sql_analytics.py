@@ -204,6 +204,13 @@ class SQLAnalyticsAgent(BaseAgent):
     async def _plan_queries(self, request: str, data_context: Dict, additional_context: str) -> Dict:
         """LLM plans what queries to run based on request and data context."""
 
+        # Simplify field_mappings for LLM - extract just column -> target path
+        raw_mappings = data_context.get('field_mappings', {})
+        simplified_mappings = {
+            col: mapping.get('target', '') if isinstance(mapping, dict) else mapping
+            for col, mapping in raw_mappings.items()
+        }
+
         prompt = f"""You are a data analyst. Given a request and data context, plan SQL queries to answer it comprehensively.
 
 REQUEST: {request}
@@ -221,7 +228,7 @@ SEMANTIC PROFILE:
 - Field Descriptions: {json.dumps(data_context.get('semantic_profile', {}).get('field_descriptions', {}), indent=2)}
 
 FIELD MAPPINGS (original column name → actual storage path):
-{json.dumps(data_context.get('field_mappings', {}), indent=2)}
+{json.dumps(simplified_mappings, indent=2)}
 
 {f"ADDITIONAL CONTEXT: {additional_context}" if additional_context else ""}
 
@@ -288,9 +295,10 @@ Return valid JSON only."""
         return not any(sql_upper.startswith(d) or f" {d} " in sql_upper for d in dangerous)
 
     async def _execute_query(self, db: AsyncSession, sql: str, data_source_id: str) -> Dict:
-        """Execute a SQL query and return results."""
+        """Execute a read-only SQL query with autocommit to avoid transaction issues."""
         try:
-            result = await db.execute(text(sql))
+            # Use autocommit for read-only queries - failures won't abort the session's transaction
+            result = await db.execute(text(sql).execution_options(autocommit=True))
             rows = result.fetchall()
             columns = result.keys()
 
