@@ -69,10 +69,14 @@ class DataDiscoveryAgent(BaseAgent):
 
         start_time = datetime.utcnow()
         conversation_id = message.conversation_id
-        data_source_id = message.payload.get("data_source_id")
+        payload = message.payload
+        data_source_id = payload.get("data_source_id")
+        skip_events = payload.get("skip_transparency_events", False)
 
-        # Helper for events
+        # Helper for events (no-op if skip_events is True)
         async def emit(event_type: EventType, title: str, details: Dict = None, step: int = 1):
+            if skip_events:
+                return
             await self.emit_event(
                 db=db,
                 user_id=user_id,

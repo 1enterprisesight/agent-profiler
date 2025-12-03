@@ -138,6 +138,7 @@ async def upload_csv(
                     action="analyze",
                     payload={
                         "data_source_id": data_source_id,
+                        "skip_transparency_events": True,  # No chat session for direct uploads
                     },
                     conversation_id=conversation_id,
                 )
