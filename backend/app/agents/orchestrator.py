@@ -332,7 +332,7 @@ If you need to query/analyze actual data rows:
   "tasks": [
     {{
       "agent": "agent_name",
-      "request": "Specific task for this agent"
+      "request": "Natural language description of what to analyze (NOT SQL syntax)"
     }}
   ]
 }}
