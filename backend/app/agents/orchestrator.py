@@ -91,6 +91,9 @@ class OrchestratorAgent(BaseAgent):
             )
 
         try:
+            # Ensure conversation session exists before emitting events
+            await self._ensure_session_exists(db, session_id, user_id, user_message)
+
             await emit(EventType.RECEIVED, "Received user message",
                       {"message_preview": user_message[:100]}, 1)
 
@@ -479,6 +482,27 @@ Return the response text (with markdown formatting). Do not wrap in JSON."""
                 "data": all_data,
                 "visualization": None
             }
+
+    async def _ensure_session_exists(
+        self,
+        db: AsyncSession,
+        session_id: str,
+        user_id: str,
+        title: str = "Chat Session"
+    ):
+        """Ensure conversation session exists before emitting events."""
+        try:
+            await db.execute(
+                text("""
+                    INSERT INTO conversation_sessions (id, user_id, title, is_active, created_at, last_activity_at)
+                    VALUES (:session_id, :user_id, :title, true, NOW(), NOW())
+                    ON CONFLICT (id) DO NOTHING
+                """),
+                {"session_id": session_id, "user_id": user_id, "title": title[:100]}
+            )
+            await db.commit()
+        except Exception as e:
+            self.logger.warning("failed_to_ensure_session", error=str(e))
 
     async def _save_message(
         self,
