@@ -10,7 +10,7 @@ Handles:
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
-from typing import Optional, List
+from typing import Optional, List, Any
 from pydantic import BaseModel
 from datetime import datetime
 import json
@@ -47,7 +47,7 @@ class ChatMessageResponse(BaseModel):
     session_id: str
     response: str
     needs_clarification: bool = False
-    data: Optional[dict] = None
+    data: Optional[Any] = None  # Can be dict or list of results
     visualization: Optional[dict] = None
     agent_activities: Optional[List[dict]] = None
 
